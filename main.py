@@ -11,6 +11,8 @@ import yfinance as yf
 from datetime import datetime
 import numpy as np
 from scipy.stats import norm
+import time
+import random
 
 # Main tickers to analyze (AI-focused portfolio from the README)
 TICKERS = [
@@ -20,23 +22,60 @@ TICKERS = [
 ]
 
 def get_stock_data(ticker):
-    """Get current stock price and basic info"""
+    """Get current stock price and basic info with rate limiting"""
     try:
-        stock = yf.Ticker(ticker)
-        info = stock.info
-        hist = stock.history(period="1d")
+        # Add random delay to avoid rate limiting
+        time.sleep(random.uniform(1, 3))
         
-        current_price = hist['Close'].iloc[-1] if not hist.empty else None
+        stock = yf.Ticker(ticker)
+        
+        # Try to get basic price data first (more reliable)
+        hist = stock.history(period="5d")
+        if hist.empty:
+            print(f"  No price data available for {ticker}")
+            return None
+            
+        current_price = hist['Close'].iloc[-1]
+        
+        # Try to get additional info, but don't fail if it's not available
+        try:
+            info = stock.info
+            market_cap = info.get('marketCap', 0)
+            sector = info.get('sector', 'Unknown')
+            industry = info.get('industry', 'Unknown')
+        except:
+            # Fallback if info is unavailable due to rate limiting
+            market_cap = 0
+            sector = 'Unknown'
+            industry = 'Unknown'
         
         return {
             'ticker': ticker,
             'current_price': current_price,
-            'market_cap': info.get('marketCap', 0),
-            'sector': info.get('sector', 'Unknown'),
-            'industry': info.get('industry', 'Unknown')
+            'market_cap': market_cap,
+            'sector': sector,
+            'industry': industry
         }
     except Exception as e:
-        print(f"Error fetching data for {ticker}: {e}")
+        print(f"  Error fetching data for {ticker}: {e}")
+        print(f"  Retrying {ticker} in 5 seconds...")
+        time.sleep(5)
+        
+        # One retry attempt
+        try:
+            stock = yf.Ticker(ticker)
+            hist = stock.history(period="1d")
+            if not hist.empty:
+                return {
+                    'ticker': ticker,
+                    'current_price': hist['Close'].iloc[-1],
+                    'market_cap': 0,
+                    'sector': 'Unknown',
+                    'industry': 'Unknown'
+                }
+        except:
+            pass
+            
         return None
 
 def calculate_black_scholes_greeks(S, K, T, r, sigma, option_type='call'):
@@ -77,14 +116,19 @@ def analyze_portfolio():
     """Analyze the portfolio of tickers"""
     print("🚀 Starting Options Portfolio Analysis")
     print("=" * 50)
+    print("⏱️  Adding delays to avoid Yahoo Finance rate limits...")
+    print("=" * 50)
     
     portfolio_data = []
     
-    for ticker in TICKERS:
-        print(f"Analyzing {ticker}...")
+    for i, ticker in enumerate(TICKERS):
+        print(f"Analyzing {ticker}... ({i+1}/{len(TICKERS)})")
         stock_data = get_stock_data(ticker)
         if stock_data:
             portfolio_data.append(stock_data)
+            print(f"  ✅ Successfully got data for {ticker}")
+        else:
+            print(f"  ❌ Failed to get data for {ticker}")
     
     # Create DataFrame
     df = pd.DataFrame(portfolio_data)
@@ -103,40 +147,55 @@ def analyze_portfolio():
     return df
 
 def get_options_data_yahoo(ticker, current_price):
-    """Get basic options data from Yahoo Finance"""
+    """Get basic options data from Yahoo Finance with rate limiting"""
     try:
+        # Add delay before options request
+        time.sleep(random.uniform(2, 4))
+        
         stock = yf.Ticker(ticker)
-        expirations = stock.options
+        
+        try:
+            expirations = stock.options
+        except Exception as e:
+            print(f"  Cannot get options expirations for {ticker}: {e}")
+            return pd.DataFrame()
         
         if not expirations:
+            print(f"  No options available for {ticker}")
             return pd.DataFrame()
         
         # Get options for the first few expirations
         all_options = []
         
-        for exp_date in expirations[:3]:  # First 3 expiration dates
+        for i, exp_date in enumerate(expirations[:2]):  # Reduced to 2 expirations to avoid rate limits
             try:
+                print(f"    Getting options for {ticker} exp {exp_date}...")
+                time.sleep(random.uniform(1, 2))  # Delay between each expiration
+                
                 opt_chain = stock.option_chain(exp_date)
                 
                 # Process calls
-                calls = opt_chain.calls.copy()
-                calls['option_type'] = 'call'
-                calls['expiration'] = exp_date
-                calls['ticker'] = ticker
+                if not opt_chain.calls.empty:
+                    calls = opt_chain.calls.copy()
+                    calls['option_type'] = 'call'
+                    calls['expiration'] = exp_date
+                    calls['ticker'] = ticker
+                    all_options.append(calls)
                 
                 # Process puts  
-                puts = opt_chain.puts.copy()
-                puts['option_type'] = 'put'
-                puts['expiration'] = exp_date
-                puts['ticker'] = ticker
-                
-                all_options.extend([calls, puts])
+                if not opt_chain.puts.empty:
+                    puts = opt_chain.puts.copy()
+                    puts['option_type'] = 'put'
+                    puts['expiration'] = exp_date
+                    puts['ticker'] = ticker
+                    all_options.append(puts)
                 
             except Exception as e:
-                print(f"  Error getting options for {exp_date}: {e}")
+                print(f"    Error getting options for {exp_date}: {e}")
                 continue
         
         if not all_options:
+            print(f"  No options data retrieved for {ticker}")
             return pd.DataFrame()
             
         options_df = pd.concat(all_options, ignore_index=True)
@@ -148,12 +207,13 @@ def get_options_data_yahoo(ticker, current_price):
         
         # Filter for reasonable options (not too far OTM, decent volume)
         options_df = options_df[
-            (options_df['volume'] > 10) & 
-            (options_df['openInterest'] > 50) &
+            (options_df['volume'] > 5) &  # Lowered volume requirement
+            (options_df['openInterest'] > 20) &  # Lowered OI requirement
             (options_df['days_to_expiration'] > 0) &
             (options_df['days_to_expiration'] < 60)
         ].copy()
         
+        print(f"    Found {len(options_df)} viable options for {ticker}")
         return options_df
         
     except Exception as e:
