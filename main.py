@@ -179,40 +179,200 @@ def analyze_portfolio():
     return df
 
 def get_options_data_yahoo(ticker, current_price):
-    """Get basic options data from Yahoo Finance with rate limiting"""
-    print(f"  ⚠️  Options data temporarily disabled due to yfinance rate limiting")
-    print(f"  📈 Current stock price for {ticker}: ${current_price:.2f}")
-    print(f"  💡 You can manually check options at: https://finance.yahoo.com/quote/{ticker}/options")
-    return pd.DataFrame()
+    """Get options data from Yahoo Finance using direct API"""
+    print(f"  📊 Fetching options data for {ticker}...")
+    
+    try:
+        # Use the same direct API approach that works for stock data
+        url = f"https://query2.finance.yahoo.com/v7/finance/options/{ticker}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        # Add delay to avoid rate limits
+        time.sleep(random.uniform(2, 4))
+        
+        response = session.get(url, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if 'optionChain' in data and data['optionChain']['result']:
+                result = data['optionChain']['result'][0]
+                options_data = []
+                
+                # Get all expiration dates
+                expirationDates = result.get('expirationDates', [])
+                
+                # Process each expiration (limit to first 3 to avoid rate limits)
+                for exp_timestamp in expirationDates[:3]:
+                    exp_date = pd.to_datetime(exp_timestamp, unit='s').strftime('%Y-%m-%d')
+                    
+                    # Get options for this expiration
+                    exp_url = f"{url}?date={exp_timestamp}"
+                    time.sleep(random.uniform(1, 2))
+                    
+                    exp_response = session.get(exp_url, headers=headers, timeout=15)
+                    if exp_response.status_code == 200:
+                        exp_data = exp_response.json()
+                        if 'optionChain' in exp_data and exp_data['optionChain']['result']:
+                            exp_result = exp_data['optionChain']['result'][0]
+                            
+                            # Process calls
+                            if 'options' in exp_result and exp_result['options']:
+                                options = exp_result['options'][0]
+                                
+                                for call in options.get('calls', []):
+                                    if call.get('bid', 0) > 0 and call.get('ask', 0) > 0:
+                                        options_data.append({
+                                            'ticker': ticker,
+                                            'expiration': exp_date,
+                                            'strike': call.get('strike', 0),
+                                            'option_type': 'Call',
+                                            'bid': call.get('bid', 0),
+                                            'ask': call.get('ask', 0),
+                                            'last_price': call.get('lastPrice', 0),
+                                            'volume': call.get('volume', 0),
+                                            'open_interest': call.get('openInterest', 0),
+                                            'implied_volatility': call.get('impliedVolatility', 0),
+                                            'delta': call.get('delta', 0),
+                                            'gamma': call.get('gamma', 0),
+                                            'theta': call.get('theta', 0),
+                                            'vega': call.get('vega', 0)
+                                        })
+                                
+                                for put in options.get('puts', []):
+                                    if put.get('bid', 0) > 0 and put.get('ask', 0) > 0:
+                                        options_data.append({
+                                            'ticker': ticker,
+                                            'expiration': exp_date,
+                                            'strike': put.get('strike', 0),
+                                            'option_type': 'Put',
+                                            'bid': put.get('bid', 0),
+                                            'ask': put.get('ask', 0),
+                                            'last_price': put.get('lastPrice', 0),
+                                            'volume': put.get('volume', 0),
+                                            'open_interest': put.get('openInterest', 0),
+                                            'implied_volatility': put.get('impliedVolatility', 0),
+                                            'delta': put.get('delta', 0),
+                                            'gamma': put.get('gamma', 0),
+                                            'theta': put.get('theta', 0),
+                                            'vega': put.get('vega', 0)
+                                        })
+                
+                if options_data:
+                    df = pd.DataFrame(options_data)
+                    print(f"  ✅ Got {len(df)} options for {ticker}")
+                    return df
+                else:
+                    print(f"  ⚠️  No valid options data for {ticker}")
+                    return pd.DataFrame()
+            else:
+                print(f"  ⚠️  No options chain data for {ticker}")
+                return pd.DataFrame()
+        else:
+            print(f"  ⚠️  HTTP {response.status_code} for {ticker} options")
+            return pd.DataFrame()
+            
+    except Exception as e:
+        print(f"  ❌ Error fetching options for {ticker}: {e}")
+        return pd.DataFrame()
 
 def screen_for_trades(portfolio_df, max_trades=5):
     """Screen for the best trading opportunities"""
     print("\n🔍 SCREENING FOR TRADES")
     print("=" * 30)
-    print("⚠️  Options screening temporarily disabled due to Yahoo Finance rate limits")
-    print("📊 Showing stock analysis instead:\n")
     
-    # Show stock analysis since options are unavailable
-    print("🏆 STOCK ANALYSIS SUMMARY")
-    print("=" * 50)
+    all_opportunities = []
     
-    for _, stock in portfolio_df.iterrows():
+    # Analyze top 5 stocks to avoid rate limits
+    top_stocks = portfolio_df.head(5)
+    
+    for _, stock in top_stocks.iterrows():
         ticker = stock['ticker']
         current_price = stock['current_price']
-        currency = stock.get('currency', 'USD')
-        exchange = stock.get('exchange', 'Unknown')
         
-        print(f"{ticker:<6} | ${current_price:<8.2f} {currency:<3} | {exchange}")
-        print(f"       💡 Manual options check: https://finance.yahoo.com/quote/{ticker}/options")
+        print(f"\n📊 Analyzing options for {ticker} (${current_price:.2f})...")
+        
+        # Get options data
+        options_df = get_options_data_yahoo(ticker, current_price)
+        
+        if not options_df.empty:
+            # Score each option
+            for _, option in options_df.iterrows():
+                # Calculate spread
+                spread = option['ask'] - option['bid']
+                spread_pct = (spread / option['ask']) * 100 if option['ask'] > 0 else 100
+                
+                # Calculate distance from current price
+                strike = option['strike']
+                price_distance = abs(strike - current_price) / current_price * 100
+                
+                # Calculate time to expiration
+                exp_date = pd.to_datetime(option['expiration'])
+                days_to_exp = (exp_date - pd.Timestamp.now()).days
+                
+                # Scoring criteria (lower is better)
+                score = 0
+                score += spread_pct * 2  # Tight spreads preferred
+                score += max(0, 15 - price_distance)  # Prefer near-the-money
+                score += max(0, 30 - days_to_exp) / 5  # Prefer shorter expirations
+                score -= min(option['volume'], 100) / 10  # Higher volume preferred
+                score -= min(option['open_interest'], 1000) / 100  # Higher OI preferred
+                
+                # Only consider liquid options
+                if (option['volume'] > 10 and 
+                    option['open_interest'] > 50 and 
+                    spread_pct < 15 and
+                    days_to_exp > 1 and days_to_exp < 45):
+                    
+                    all_opportunities.append({
+                        'ticker': ticker,
+                        'current_price': current_price,
+                        'strike': strike,
+                        'option_type': option['option_type'],
+                        'expiration': option['expiration'],
+                        'days_to_exp': days_to_exp,
+                        'bid': option['bid'],
+                        'ask': option['ask'],
+                        'spread': spread,
+                        'spread_pct': spread_pct,
+                        'volume': option['volume'],
+                        'open_interest': option['open_interest'],
+                        'implied_volatility': option['implied_volatility'],
+                        'delta': option['delta'],
+                        'score': score,
+                        'trade_suggestion': f"{'Sell' if abs(option['delta']) > 0.3 else 'Buy'} {option['option_type']} ${strike}"
+                    })
     
-    print(f"\n💡 NEXT STEPS:")
-    print("1. Review the stock prices above")
-    print("2. Manually check options chains on Yahoo Finance")
-    print("3. Look for high IV options near support/resistance levels")
-    print("4. Consider paper trading first")
-    print("5. Start with small position sizes")
-    
-    return pd.DataFrame()
+    if all_opportunities:
+        # Create DataFrame and sort by score
+        trades_df = pd.DataFrame(all_opportunities)
+        trades_df = trades_df.sort_values('score').head(max_trades)
+        
+        # Save to CSV
+        trades_df.to_csv('trading_opportunities.csv', index=False)
+        
+        print(f"\n🏆 TOP {len(trades_df)} TRADING OPPORTUNITIES")
+        print("=" * 60)
+        
+        for _, trade in trades_df.iterrows():
+            print(f"\n{trade['ticker']} | {trade['trade_suggestion']}")
+            print(f"  Current: ${trade['current_price']:.2f} | Exp: {trade['expiration']} ({trade['days_to_exp']} days)")
+            print(f"  Bid/Ask: ${trade['bid']:.2f}/${trade['ask']:.2f} (spread: {trade['spread_pct']:.1f}%)")
+            print(f"  Volume: {trade['volume']} | OI: {trade['open_interest']} | IV: {trade['implied_volatility']:.1%}")
+            print(f"  Delta: {trade['delta']:.3f} | Score: {trade['score']:.1f}")
+        
+        return trades_df
+    else:
+        print("\n⚠️  No suitable options found with current criteria")
+        print("📊 Try checking these manually:")
+        
+        for _, stock in top_stocks.iterrows():
+            ticker = stock['ticker']
+            current_price = stock['current_price']
+            print(f"  {ticker}: ${current_price:.2f} - https://finance.yahoo.com/quote/{ticker}/options")
+        
+        return pd.DataFrame()
 
 def main():
     """Main function to run the analysis"""
