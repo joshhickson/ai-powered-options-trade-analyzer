@@ -1,1 +1,16 @@
-
+ticker,current_price,currency,exchange,market_cap,sector,industry
+NVDA,173.5,USD,NasdaqGS,0,Technology,Unknown
+TSLA,316.06,USD,NasdaqGS,0,Technology,Unknown
+GOOGL,193.18,USD,NasdaqGS,0,Technology,Unknown
+PLTR,158.8,USD,NasdaqGS,0,Technology,Unknown
+COIN,391.66,USD,NasdaqGS,0,Technology,Unknown
+LMT,421.17,USD,NYSE,0,Technology,Unknown
+ISRG,495.86,USD,NasdaqGS,0,Technology,Unknown
+HLX,6.17,USD,NYSE,0,Technology,Unknown
+RBLX,118.82,USD,NYSE,0,Technology,Unknown
+Z,81.16,USD,NasdaqGS,0,Technology,Unknown
+AVAV,272.88,USD,NasdaqGS,0,Technology,Unknown
+DE,517.38,USD,NYSE,0,Technology,Unknown
+SYM,52.99,USD,NasdaqGM,0,Technology,Unknown
+RXRX,6.49,USD,NasdaqGS,0,Technology,Unknown
+UPST,83.53,USD,NasdaqGS,0,Technology,Unknown
