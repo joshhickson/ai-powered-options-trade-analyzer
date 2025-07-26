@@ -41,51 +41,104 @@ TICKERS = [
 # 'LMT', 'ISRG', 'HLX', 'RBLX', 'Z', 'AVAV', 'DE', 'SYM', 'RXRX', 'UPST'
 
 def get_stock_data(ticker):
-    """Get current stock price and basic info with aggressive rate limiting"""
+    """Get current stock price with multiple fallback methods"""
     max_retries = 3
     
     for attempt in range(max_retries):
         try:
-            # Much longer delay to avoid rate limiting
-            delay = random.uniform(3, 8) + (attempt * 2)  # Longer delays on retries
+            # Progressive delay strategy
+            delay = random.uniform(2, 5) + (attempt * 3)
             print(f"  Waiting {delay:.1f}s before requesting {ticker} (attempt {attempt + 1})...")
             time.sleep(delay)
             
-            # Create new session with headers to appear more like a browser
-            stock = yf.Ticker(ticker)
+            # Method 1: Try yf.download (often more reliable)
+            print(f"  Method 1: Using yf.download for {ticker}...")
+            try:
+                data = yf.download(ticker, period="1d", progress=False, timeout=15)
+                if not data.empty and 'Close' in data.columns:
+                    current_price = data['Close'].iloc[-1]
+                    print(f"  ✅ yf.download success for {ticker}: ${current_price:.2f}")
+                    return {
+                        'ticker': ticker,
+                        'current_price': current_price,
+                        'market_cap': 0,
+                        'sector': 'Technology',
+                        'industry': 'Unknown'
+                    }
+            except Exception as e:
+                print(f"  Method 1 failed: {e}")
             
-            # Try to get basic price data first (more reliable)
-            print(f"  Fetching price data for {ticker}...")
-            hist = stock.history(period="1d", timeout=30)  # Shorter period, add timeout
+            # Method 2: Try longer period
+            print(f"  Method 2: Using 5-day period for {ticker}...")
+            try:
+                stock = yf.Ticker(ticker)
+                hist = stock.history(period="5d", timeout=15)
+                if not hist.empty and 'Close' in hist.columns:
+                    current_price = hist['Close'].iloc[-1]
+                    print(f"  ✅ 5-day history success for {ticker}: ${current_price:.2f}")
+                    return {
+                        'ticker': ticker,
+                        'current_price': current_price,
+                        'market_cap': 0,
+                        'sector': 'Technology',
+                        'industry': 'Unknown'
+                    }
+            except Exception as e:
+                print(f"  Method 2 failed: {e}")
             
-            if hist.empty:
-                print(f"  No price data available for {ticker} on attempt {attempt + 1}")
-                if attempt < max_retries - 1:
-                    continue
-                return None
+            # Method 3: Try with different interval
+            print(f"  Method 3: Using hourly data for {ticker}...")
+            try:
+                stock = yf.Ticker(ticker)
+                hist = stock.history(period="1d", interval="1h", timeout=15)
+                if not hist.empty and 'Close' in hist.columns:
+                    current_price = hist['Close'].iloc[-1]
+                    print(f"  ✅ Hourly data success for {ticker}: ${current_price:.2f}")
+                    return {
+                        'ticker': ticker,
+                        'current_price': current_price,
+                        'market_cap': 0,
+                        'sector': 'Technology',
+                        'industry': 'Unknown'
+                    }
+            except Exception as e:
+                print(f"  Method 3 failed: {e}")
             
-            current_price = hist['Close'].iloc[-1]
-            print(f"  ✅ Got price for {ticker}: ${current_price:.2f}")
-            
-            # Skip additional info to avoid further rate limiting
-            return {
-                'ticker': ticker,
-                'current_price': current_price,
-                'market_cap': 0,
-                'sector': 'Technology',  # Default assumption for this AI portfolio
-                'industry': 'Unknown'
-            }
+            # Method 4: Direct API call as last resort
+            print(f"  Method 4: Direct Yahoo API for {ticker}...")
+            try:
+                url = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}"
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+                response = requests.get(url, headers=headers, timeout=15)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if 'chart' in data and data['chart']['result']:
+                        result = data['chart']['result'][0]
+                        if 'meta' in result and 'regularMarketPrice' in result['meta']:
+                            current_price = result['meta']['regularMarketPrice']
+                            print(f"  ✅ Direct API success for {ticker}: ${current_price:.2f}")
+                            return {
+                                'ticker': ticker,
+                                'current_price': current_price,
+                                'market_cap': 0,
+                                'sector': 'Technology',
+                                'industry': 'Unknown'
+                            }
+            except Exception as e:
+                print(f"  Method 4 failed: {e}")
             
         except Exception as e:
-            print(f"  ⚠️  Error fetching {ticker} (attempt {attempt + 1}): {e}")
-            if attempt < max_retries - 1:
-                wait_time = 10 + (attempt * 5)
-                print(f"  Waiting {wait_time}s before retry...")
-                time.sleep(wait_time)
-            else:
-                print(f"  ❌ Failed to get data for {ticker} after {max_retries} attempts")
-                return None
+            print(f"  ⚠️  All methods failed for {ticker} (attempt {attempt + 1}): {e}")
+            
+        if attempt < max_retries - 1:
+            wait_time = 15 + (attempt * 10)  # Longer waits between full retry cycles
+            print(f"  All methods failed. Waiting {wait_time}s before full retry...")
+            time.sleep(wait_time)
     
+    print(f"  ❌ Failed to get data for {ticker} after {max_retries} attempts with all methods")
     return None
 
 def calculate_black_scholes_greeks(S, K, T, r, sigma, option_type='call'):
