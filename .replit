@@ -4,3 +4,15 @@ channel = "stable-24_05"
 
 [deployment]
 run = ["sh", "-c", "Run"]
+
+[workflows]
+runButton = "Run Analysis"
+
+[[workflows.workflow]]
+name = "Run Analysis"
+author = 42214058
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python main.py"
