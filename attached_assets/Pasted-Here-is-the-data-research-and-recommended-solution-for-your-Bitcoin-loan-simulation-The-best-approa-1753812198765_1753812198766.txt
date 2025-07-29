@@ -1,0 +1,117 @@
+Here is the data research and recommended solution for your Bitcoin loan simulation.
+The best approach is to use the CoinGecko API, which is free, requires no authentication for historical data, and is more reliable for crypto than yfinance. We'll call it directly using the requests library and parse the data with pandas.
+Dependency Installation
+In your Replit environment, navigate to the "Shell" tab and run the following command to ensure requests is installed. Pandas and numpy are likely already part of your setup.
+pip install requests pandas
+
+Replit should also automatically detect the imports and prompt you to install the packages.
+Recommended Approach: CoinGecko API
+This solution fetches daily Bitcoin price data from 2010 to the present and includes robust error handling. If the API fails, it will fall back to loading data from a local CSV file.
+Complete Python Code Example
+This function replaces your existing load_btc_history() and integrates the recommended API call and a CSV fallback.
+import pandas as pd
+import requests
+import time
+from typing import Optional
+
+def load_btc_history() -> Optional[pd.Series]:
+    """
+    Fetches daily Bitcoin closing prices from 2010 to the present.
+
+    It first tries to fetch live data from the CoinGecko API. If that
+    fails due to a network issue or API error, it falls back to loading
+    data from a local 'btc_history_backup.csv' file.
+
+    Returns:
+        A pandas Series with daily closing prices indexed by date,
+        or None if both methods fail.
+    """
+    print("Attempting to fetch live BTC price data from CoinGecko API...")
+    try:
+        # 1. Primary Method: CoinGecko API
+        # The 'days' parameter can be set to 'max' to get all available data
+        url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
+        params = {
+            'vs_currency': 'usd',
+            'days': 'max',
+            'interval': 'daily'
+        }
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()  # Raises an HTTPError for bad responses (4XX or 5XX)
+
+        # Process the JSON response
+        data = response.json()['prices']
+        df = pd.DataFrame(data, columns=['timestamp', 'price'])
+        
+        # Convert timestamp (milliseconds) to datetime and set as index
+        df['date'] = pd.to_datetime(df['timestamp'], unit='ms').dt.date
+        df = df.set_index('date')
+        
+        # Create a clean daily close price Series
+        btc_series = df['price'].astype(float)
+        btc_series.index = pd.to_datetime(btc_series.index)
+        
+        # CoinGecko might return multiple data points for the same day; keep the last one.
+        btc_series = btc_series.resample('D').last().ffill()
+        
+        print("✅ Successfully fetched and processed live BTC data.")
+        return btc_series
+
+    except requests.exceptions.RequestException as e:
+        print(f"⚠️ API call failed: {e}")
+        print("Falling back to local CSV file.")
+        
+        # 2. Fallback Method: Local CSV File
+        try:
+            df_csv = pd.read_csv('btc_history_backup.csv', index_col='Date', parse_dates=True)
+            btc_series_csv = df_csv['Close'].astype(float)
+            
+            # Ensure the index is a datetime object
+            btc_series_csv.index = pd.to_datetime(btc_series_csv.index)
+
+            print("✅ Successfully loaded BTC data from local CSV.")
+            return btc_series_csv
+        except FileNotFoundError:
+            print("❌ Fallback failed: btc_history_backup.csv not found.")
+            return None
+        except Exception as csv_e:
+            print(f"❌ An error occurred while reading the CSV file: {csv_e}")
+            return None
+
+# --- Example Usage ---
+if __name__ == "__main__":
+    btc_price_history = load_btc_history()
+    
+    if btc_price_history is not None:
+        print("\n--- BTC Price History ---")
+        print(btc_price_history.head())
+        print("...")
+        print(btc_price_history.tail())
+        print(f"\nData points loaded: {len(btc_price_history)}")
+        print(f"Latest Price ({btc_price_history.index[-1].strftime('%Y-%m-%d')}): ${btc_price_history.iloc[-1]:,.2f}")
+
+
+Backup Data Sources & Setup
+For the fallback mechanism to work, you need a backup CSV file in your project directory.
+1. Where to Download the CSV
+ * CoinGecko: Navigate to the Bitcoin page, select a wide date range, and export as CSV.
+ * CryptoDataDownload: A popular site for historical data. Link for BTC/USD.
+ * Kaggle: Often has well-maintained historical crypto datasets.
+2. How to Format the CSV
+Save the file as btc_history_backup.csv in the root of your Replit project. The file must have at least two columns: Date and Close.
+btc_history_backup.csv example:
+Date,Open,High,Low,Close,Volume
+2024-07-28,118000.50,119500.00,117800.20,119200.75,30000
+2024-07-29,119200.75,120100.00,118500.00,119850.50,35000
+...
+
+Other Alternatives & Libraries
+Here are other options if you need to expand your data sources in the future.
+ * Python Libraries:
+   * ccxt: An excellent library for connecting to over 100 crypto exchange APIs. It's more complex and often requires API keys but is extremely powerful for fetching real-time and historical data.
+     * Installation: pip install ccxt
+   * cryptocompare: A wrapper for the CryptoCompare API. It requires an API key for most serious use.
+     * Installation: pip install cryptocompare
+ * Direct APIs:
+   * CryptoCompare API: Has a free tier but requires an API key. Provides granular historical data.
+   * Binance API: The official exchange API is very reliable. It has public endpoints for historical data that don't require a key but have stricter rate limits.
