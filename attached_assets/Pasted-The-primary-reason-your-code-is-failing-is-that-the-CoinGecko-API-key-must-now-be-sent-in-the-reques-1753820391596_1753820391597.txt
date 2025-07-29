@@ -1,0 +1,60 @@
+The primary reason your code is failing is that the CoinGecko API key must now be sent in the request headers, not as a URL parameter.
+Here is the corrected version of your Python code. Moving the API key from params to headers should resolve the 401 Unauthorized error.
+# Corrected Python Code
+import requests
+import os
+
+# Best practice: Load key from Replit Secrets or environment variables
+API_KEY = os.environ.get("COINGECKO_API_KEY", "YOUR_API_KEY_HERE")
+
+url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
+
+# The API key is REMOVED from params
+params = {
+    'vs_currency': 'usd',
+    'days': '365', # Use a smaller number for testing
+    'interval': 'daily'
+}
+
+# The API key is ADDED to headers with a hyphenated key
+headers = {
+    'accept': 'application/json',
+    'x-cg-demo-api-key': API_KEY, # Correct placement
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+}
+
+try:
+    response = requests.get(url, params=params, headers=headers, timeout=20)
+    response.raise_for_status() # Raises an error for bad status codes
+    # ... process your data ...
+    print("✅ Successfully fetched data!")
+    print(response.json()['prices'][0]) # Print first data point
+except requests.exceptions.HTTPError as err:
+    print(f"❌ HTTP Error: {err}")
+    print(f"   Response Body: {err.response.text}") # Crucial for debugging
+
+## Debugging Questions Answered
+Here are direct answers to your debugging questions for January 2025.
+1. Authentication Method Verification
+Yes, your suspicion is correct. The API key must be sent in the request headers. The correct header name is x-cg-demo-api-key. Using URL parameters for authentication is no longer the standard method for their current API plans.
+2. Rate Limiting and Request Headers
+The key limits for a Demo plan are:
+ * Rate Limit: ~30 calls per minute.
+ * Monthly Quota: 10,000 calls per month.
+The only header required for authentication is x-cg-demo-api-key. Including a standard User-Agent is good practice to avoid being blocked by automated traffic filters but is not part of the authentication itself.
+3. Endpoint URL Verification
+Yes, https://api.coingecko.com/api/v3/coins/bitcoin/market_chart is still the correct endpoint for fetching historical market chart data. The URL itself has not changed.
+4. Demo Key Limitations
+The parameter days=max is a resource-intensive query and is often restricted on free or demo tiers. This is a likely cause for failure even with a valid key. Always test with a smaller, fixed value first, like days=365. If that works, your authentication is correct, and the issue is related to the scope of your request.
+5. Alternative Working Endpoints
+If you continue to have issues, use a simpler endpoint to verify your key is working correctly. These are less resource-intensive and great for testing:
+ * /ping: https://api.coingecko.com/api/v3/ping (requires the auth header now). A successful response confirms your key works.
+ * /simple/price: Fetches the current price.
+ * /coins/bitcoin/ohlc: Fetches daily OHLC (Open, High, Low, Close) data. It's a great alternative to market_chart for historical prices.
+6. Error Response Analysis
+When you get a 401 or 403 error, the most useful information is in the response body. As shown in the corrected code's except block, you should always print err.response.text. CoinGecko's error response is a JSON object with an error field that will tell you exactly what is wrong, for example: {"error":"API key is invalid"} or {"error":"You have exceeded the Rate Limit"}.
+7. Backup API Recommendations
+If CoinGecko remains problematic, the most reliable, no-key alternatives in 2025 are:
+ * Binance: https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000
+ * Coinbase: https://api.pro.coinbase.com/products/BTC-USD/candles?granularity=86400
+Both work excellently with the Python requests library and do not require authentication for public historical data.
