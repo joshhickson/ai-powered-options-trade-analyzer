@@ -43,15 +43,62 @@ except ImportError:
 # ──────────────────────────────────────────────────────────────────────────────
 # Section 1 · Pull / load BTC price history
 # ──────────────────────────────────────────────────────────────────────────────
+def generate_synthetic_btc_data():
+    """Generate synthetic BTC price data for simulation when real data fails."""
+    print("🔄 Generating synthetic BTC price data for simulation...")
+    
+    # Create 5 years of daily data
+    dates = pd.date_range(start='2019-01-01', end='2024-01-01', freq='D')
+    
+    # Generate realistic BTC price progression with volatility
+    np.random.seed(42)  # For reproducible results
+    n_days = len(dates)
+    
+    # Start at $4000, trend upward to ~$100k with realistic volatility
+    trend = np.linspace(4000, 100000, n_days)
+    volatility = np.random.normal(0, 0.04, n_days)  # 4% daily volatility
+    
+    # Apply cumulative volatility
+    price_changes = np.exp(np.cumsum(volatility))
+    prices = trend * price_changes
+    
+    # Add some realistic crashes and recoveries
+    crash_points = [int(n_days * 0.3), int(n_days * 0.6), int(n_days * 0.8)]
+    for crash_idx in crash_points:
+        if crash_idx < len(prices):
+            crash_magnitude = np.random.uniform(0.3, 0.7)  # 30-70% crash
+            recovery_days = 200
+            end_idx = min(crash_idx + recovery_days, len(prices))
+            
+            # Apply crash and gradual recovery
+            for i in range(crash_idx, end_idx):
+                recovery_factor = (i - crash_idx) / recovery_days
+                prices[i] *= (crash_magnitude + (1 - crash_magnitude) * recovery_factor)
+    
+    return pd.Series(prices, index=dates, name='Close')
+
 def load_btc_history() -> pd.Series:
     """Return a daily Close price series indexed by date."""
     if ONLINE:
-        btc = yf.download("BTC-USD", start="2010-07-17", progress=False)
-        return btc["Adj Close"].dropna()
+        try:
+            print("📡 Attempting to download BTC price data from Yahoo Finance...")
+            btc = yf.download("BTC-USD", start="2010-07-17", progress=False)
+            if btc.empty or 'Adj Close' not in btc.columns:
+                raise Exception("No data returned from yfinance")
+            prices = btc["Adj Close"].dropna()
+            if len(prices) < 100:  # Need sufficient data points
+                raise Exception("Insufficient price data")
+            print(f"✅ Successfully loaded {len(prices)} days of BTC price data")
+            return prices
+        except Exception as e:
+            print(f"⚠️  yfinance failed: {e}")
+            print("📊 Falling back to synthetic data generation...")
+            return generate_synthetic_btc_data()
     else:
         csv = "btc_history.csv"
         if not os.path.exists(csv):
-            sys.exit("BTC history CSV missing and yfinance unavailable.")
+            print("📊 No CSV file found, generating synthetic data...")
+            return generate_synthetic_btc_data()
         df = pd.read_csv(csv, parse_dates=["Date"], index_col="Date")
         return df["Close"].dropna()
 
@@ -88,27 +135,75 @@ def worst_drop_until_recovery(price_series: pd.Series,
 
 draw_df = worst_drop_until_recovery(prices)
 
+# Validate we have sufficient data
+if len(draw_df) < 50:
+    print(f"⚠️  Warning: Only {len(draw_df)} recovery cycles found. Results may be less reliable.")
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Section 3 · Fit 99 th-percentile drawdown curve  draw99(price) = a·p^(-b)
 # ──────────────────────────────────────────────────────────────────────────────
 # Get 99th-percentile (largest magnitude) drop for price bins
-bins = np.logspace(np.log10(draw_df.price.min()),
-                   np.log10(draw_df.price.max()), 40)
-draw_df["bin"] = pd.cut(draw_df.price, bins=bins)
+min_price = draw_df.price.min()
+max_price = draw_df.price.max()
+
+print(f"📊 Price range for analysis: ${min_price:.0f} to ${max_price:.0f}")
+print(f"📊 Found {len(draw_df)} recovery cycles for analysis")
+
+# Create bins ensuring they are monotonically increasing
+if max_price <= min_price:
+    print("⚠️  Invalid price range, using default drawdown model...")
+    # Use a simple fallback model
+    def draw99(price: float) -> float:
+        return 0.8 * (price / 50000) ** (-0.3)  # Reasonable power law
+else:
+    # Use fewer bins if we have limited data
+    n_bins = min(40, max(10, len(draw_df) // 5))
+    bins = np.logspace(np.log10(min_price), np.log10(max_price), n_bins)
+    
+    # Ensure bins are strictly increasing
+    bins = np.sort(bins)
+    bins = bins[bins > 0]  # Remove any zero or negative values
+    
+    if len(np.unique(bins)) < len(bins):
+        print("⚠️  Duplicate bin edges detected, using linear spacing...")
+        bins = np.linspace(min_price, max_price, n_bins)
+    
+    draw_df["bin"] = pd.cut(draw_df.price, bins=bins)
 bin_stats = draw_df.groupby("bin").agg(
-    p=("price", "median"),
-    d99=("draw", lambda x: np.percentile(x, 1))  # 1st percentile = worst 1%
-).dropna()
-
-# Fit a log-log linear regression  ln|d| = ln a  – b ln p
-y = np.log(np.abs(bin_stats.d99.values))
-x = np.log(bin_stats.p.values)
-b, ln_a = np.polyfit(x, y, 1) * np.array([-1, 1])  # adjust sign
-a = math.exp(ln_a)
-
-def draw99(price: float) -> float:
-    """Return the 99 % worst expected drawdown (as +fraction) for a price."""
-    return a * (price ** (-b))  # positive number like 0.25 → 25 %
+        p=("price", "median"),
+        d99=("draw", lambda x: np.percentile(x, 1))  # 1st percentile = worst 1%
+    ).dropna()
+    
+    if len(bin_stats) < 3:
+        print("⚠️  Insufficient binned data, using simple drawdown model...")
+        def draw99(price: float) -> float:
+            return 0.8 * (price / 50000) ** (-0.3)
+    else:
+        try:
+            # Fit a log-log linear regression  ln|d| = ln a  – b ln p
+            y = np.log(np.abs(bin_stats.d99.values))
+            x = np.log(bin_stats.p.values)
+            
+            # Check for valid data
+            if np.any(np.isnan(y)) or np.any(np.isnan(x)) or np.any(np.isinf(y)) or np.any(np.isinf(x)):
+                raise ValueError("Invalid data for curve fitting")
+                
+            b, ln_a = np.polyfit(x, y, 1) * np.array([-1, 1])  # adjust sign
+            a = math.exp(ln_a)
+            
+            print(f"📈 Fitted drawdown model: draw99(p) = {a:.4f} * p^(-{b:.4f})")
+            
+            def draw99(price: float) -> float:
+                """Return the 99 % worst expected drawdown (as +fraction) for a price."""
+                result = a * (price ** (-b))
+                # Clamp to reasonable bounds
+                return max(0.1, min(0.9, result))  # Between 10% and 90%
+                
+        except Exception as e:
+            print(f"⚠️  Curve fitting failed: {e}")
+            print("Using fallback drawdown model...")
+            def draw99(price: float) -> float:
+                return 0.8 * (price / 50000) ** (-0.3)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Section 4 · Simulation parameters & state
