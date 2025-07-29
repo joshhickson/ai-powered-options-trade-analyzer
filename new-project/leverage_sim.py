@@ -40,6 +40,12 @@ except ImportError:
     ONLINE = False
     print("⚠️  yfinance not found.  Expecting btc_history.csv in this folder.")
 
+# Import requests for CoinGecko API
+try:
+    import requests
+except ImportError:
+    print("⚠️  requests not found. Install with: pip install requests")
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Section 1 · Pull / load BTC price history
 # ──────────────────────────────────────────────────────────────────────────────
@@ -78,29 +84,88 @@ def generate_synthetic_btc_data():
     return pd.Series(prices, index=dates, name='Close')
 
 def load_btc_history() -> pd.Series:
-    """Return a daily Close price series indexed by date."""
+    """
+    Fetches daily Bitcoin closing prices from 2010 to the present.
+    
+    First tries CoinGecko API, then falls back to local CSV, then synthetic data.
+    """
+    print("📡 Attempting to fetch live BTC price data from CoinGecko API...")
+    
+    # Method 1: CoinGecko API (recommended)
+    try:
+        import requests
+        
+        url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
+        params = {
+            'vs_currency': 'usd',
+            'days': 'max',
+            'interval': 'daily'
+        }
+        
+        response = requests.get(url, params=params, timeout=15)
+        response.raise_for_status()
+        
+        # Process the JSON response
+        data = response.json()['prices']
+        df = pd.DataFrame(data, columns=['timestamp', 'price'])
+        
+        # Convert timestamp (milliseconds) to datetime and set as index
+        df['date'] = pd.to_datetime(df['timestamp'], unit='ms').dt.date
+        df = df.set_index('date')
+        
+        # Create a clean daily close price Series
+        btc_series = df['price'].astype(float)
+        btc_series.index = pd.to_datetime(btc_series.index)
+        
+        # CoinGecko might return multiple data points for the same day; keep the last one
+        btc_series = btc_series.resample('D').last().ffill()
+        
+        print(f"✅ Successfully fetched {len(btc_series)} days of live BTC data from CoinGecko")
+        return btc_series
+        
+    except Exception as e:
+        print(f"⚠️  CoinGecko API failed: {e}")
+    
+    # Method 2: Local CSV fallback
+    try:
+        csv_files = ["btc_history_backup.csv", "btc_history.csv"]
+        for csv_file in csv_files:
+            if os.path.exists(csv_file):
+                print(f"📂 Loading BTC data from {csv_file}...")
+                df = pd.read_csv(csv_file, index_col=0, parse_dates=True)
+                
+                # Try different column names
+                price_col = None
+                for col in ['Close', 'close', 'price', 'Price']:
+                    if col in df.columns:
+                        price_col = col
+                        break
+                
+                if price_col:
+                    btc_series = df[price_col].astype(float).dropna()
+                    btc_series.index = pd.to_datetime(btc_series.index)
+                    print(f"✅ Successfully loaded {len(btc_series)} days from CSV")
+                    return btc_series
+                
+    except Exception as e:
+        print(f"⚠️  CSV loading failed: {e}")
+    
+    # Method 3: yfinance fallback (if available)
     if ONLINE:
         try:
-            print("📡 Attempting to download BTC price data from Yahoo Finance...")
+            print("📡 Trying yfinance as backup...")
             btc = yf.download("BTC-USD", start="2010-07-17", progress=False)
-            if btc.empty or 'Adj Close' not in btc.columns:
-                raise Exception("No data returned from yfinance")
-            prices = btc["Adj Close"].dropna()
-            if len(prices) < 100:  # Need sufficient data points
-                raise Exception("Insufficient price data")
-            print(f"✅ Successfully loaded {len(prices)} days of BTC price data")
-            return prices
+            if not btc.empty and 'Adj Close' in btc.columns:
+                prices = btc["Adj Close"].dropna()
+                if len(prices) >= 100:
+                    print(f"✅ yfinance backup successful: {len(prices)} days")
+                    return prices
         except Exception as e:
-            print(f"⚠️  yfinance failed: {e}")
-            print("📊 Falling back to synthetic data generation...")
-            return generate_synthetic_btc_data()
-    else:
-        csv = "btc_history.csv"
-        if not os.path.exists(csv):
-            print("📊 No CSV file found, generating synthetic data...")
-            return generate_synthetic_btc_data()
-        df = pd.read_csv(csv, parse_dates=["Date"], index_col="Date")
-        return df["Close"].dropna()
+            print(f"⚠️  yfinance backup failed: {e}")
+    
+    # Method 4: Synthetic data (last resort)
+    print("📊 All real data sources failed, falling back to synthetic data...")
+    return generate_synthetic_btc_data()
 
 prices = load_btc_history()
 
