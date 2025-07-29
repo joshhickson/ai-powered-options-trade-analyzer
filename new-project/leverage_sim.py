@@ -239,12 +239,22 @@ else:
         """Calculate 1st percentile, handling empty groups."""
         if len(x) == 0:
             return np.nan
-        return np.percentile(x, 1)
+        # Ensure we have meaningful drawdowns (not zero)
+        valid_draws = x[x < -0.001]  # Only negative drawdowns > 0.1%
+        if len(valid_draws) == 0:
+            return -0.05  # Default 5% minimum drawdown
+        return np.percentile(valid_draws, 1)
     
     bin_stats = draw_df.groupby("bin", observed=False).agg(
             p=("price", "median"),
-            d99=("draw", safe_percentile)  # 1st percentile = worst 1%
+            d99=("draw", safe_percentile),  # 1st percentile = worst 1%
+            count=("draw", "count")
         ).dropna()
+    
+    # Filter bins with sufficient data points
+    bin_stats = bin_stats[bin_stats['count'] >= 3]
+    
+    print(f"📊 Valid bins for curve fitting: {len(bin_stats)}")
     
     if len(bin_stats) < 3:
         print("⚠️  Insufficient binned data, using simple drawdown model...")
@@ -252,24 +262,41 @@ else:
             return 0.8 * (price / 50000) ** (-0.3)
     else:
         try:
-            # Fit a log-log linear regression  ln|d| = ln a  – b ln p
-            y = np.log(np.abs(bin_stats.d99.values))
-            x = np.log(bin_stats.p.values)
+            # Ensure all drawdowns are meaningful negative values
+            drawdown_values = bin_stats.d99.values
+            price_values = bin_stats.p.values
             
-            # Check for valid data
+            # Filter out any remaining problematic values
+            valid_mask = (drawdown_values < -0.001) & (price_values > 0)
+            if np.sum(valid_mask) < 3:
+                raise ValueError("Insufficient valid drawdown data")
+            
+            filtered_drawdowns = np.abs(drawdown_values[valid_mask])
+            filtered_prices = price_values[valid_mask]
+            
+            # Fit a log-log linear regression  ln|d| = ln a  – b ln p
+            y = np.log(filtered_drawdowns)
+            x = np.log(filtered_prices)
+            
+            # Final validation
             if np.any(np.isnan(y)) or np.any(np.isnan(x)) or np.any(np.isinf(y)) or np.any(np.isinf(x)):
-                raise ValueError("Invalid data for curve fitting")
+                raise ValueError("Invalid data after filtering")
                 
             b, ln_a = np.polyfit(x, y, 1) * np.array([-1, 1])  # adjust sign
             a = math.exp(ln_a)
             
+            # Validate fitted parameters
+            if not (0.01 < a < 10) or not (0.1 < b < 2):
+                raise ValueError(f"Unrealistic fitted parameters: a={a:.4f}, b={b:.4f}")
+            
             print(f"📈 Fitted drawdown model: draw99(p) = {a:.4f} * p^(-{b:.4f})")
+            print(f"📊 Model trained on {len(filtered_prices)} valid data points")
             
             def draw99(price: float) -> float:
                 """Return the 99 % worst expected drawdown (as +fraction) for a price."""
                 result = a * (price ** (-b))
                 # Clamp to reasonable bounds
-                return max(0.1, min(0.9, result))  # Between 10% and 90%
+                return max(0.05, min(0.85, result))  # Between 5% and 85%
                 
         except Exception as e:
             print(f"⚠️  Curve fitting failed: {e}")
