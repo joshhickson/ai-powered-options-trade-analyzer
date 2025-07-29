@@ -85,48 +85,83 @@ def generate_synthetic_btc_data():
 
 def load_btc_history() -> pd.Series:
     """
-    Fetches daily Bitcoin closing prices from 2010 to the present.
+    Fetches daily Bitcoin closing prices using the most reliable 2025 methods.
     
-    First tries CoinGecko API, then falls back to local CSV, then synthetic data.
+    Tier 1: Binance public API (no key needed, most reliable)
+    Tier 2: Coinbase public API (backup)
+    Tier 3: Local CSV fallback
+    Tier 4: Synthetic data (last resort)
     """
-    print("📡 Attempting to fetch live BTC price data from CoinGecko API...")
     
-    # Method 1: CoinGecko API (recommended)
+    # Method 1: Binance API (Primary - July 2025)
+    print("📡 Attempting to fetch live BTC data from Binance API...")
     try:
         import requests
         
-        url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
+        url = "https://api.binance.com/api/v3/klines"
         params = {
-            'vs_currency': 'usd',
-            'days': 'max',
-            'interval': 'daily'
+            'symbol': 'BTCUSDT',
+            'interval': '1d',
+            'limit': 1000  # Max limit for Binance
         }
         
-        response = requests.get(url, params=params, timeout=15)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        response = requests.get(url, params=params, headers=headers, timeout=15)
         response.raise_for_status()
         
-        # Process the JSON response
-        data = response.json()['prices']
-        df = pd.DataFrame(data, columns=['timestamp', 'price'])
+        # Process Binance klines data
+        data = response.json()
+        df = pd.DataFrame(data, columns=[
+            'Open_time', 'Open', 'High', 'Low', 'Close', 'Volume',
+            'Close_time', 'Quote_asset_volume', 'Number_of_trades',
+            'Taker_buy_base_asset_volume', 'Taker_buy_quote_asset_volume', 'Ignore'
+        ])
         
-        # Convert timestamp (milliseconds) to datetime and set as index
-        df['date'] = pd.to_datetime(df['timestamp'], unit='ms').dt.date
-        df = df.set_index('date')
+        # Convert timestamp to datetime and select Close price
+        df['Date'] = pd.to_datetime(df['Open_time'], unit='ms')
+        df = df.set_index('Date')
+        btc_series = df['Close'].astype(float)
         
-        # Create a clean daily close price Series
-        btc_series = df['price'].astype(float)
-        btc_series.index = pd.to_datetime(btc_series.index)
-        
-        # CoinGecko might return multiple data points for the same day; keep the last one
-        btc_series = btc_series.resample('D').last().ffill()
-        
-        print(f"✅ Successfully fetched {len(btc_series)} days of live BTC data from CoinGecko")
+        print(f"✅ Successfully fetched {len(btc_series)} days of live BTC data from Binance")
         return btc_series
         
     except Exception as e:
-        print(f"⚠️  CoinGecko API failed: {e}")
+        print(f"⚠️  Binance API failed: {e}")
     
-    # Method 2: Local CSV fallback
+    # Method 2: Coinbase API (Backup)
+    print("📡 Trying Coinbase API as backup...")
+    try:
+        import requests
+        
+        url = "https://api.exchange.coinbase.com/products/BTC-USD/candles"
+        params = {
+            'granularity': 86400  # 86400 seconds = 1 day
+        }
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        response = requests.get(url, params=params, headers=headers, timeout=15)
+        response.raise_for_status()
+        
+        data = response.json()
+        df = pd.DataFrame(data, columns=['time', 'low', 'high', 'open', 'close', 'volume'])
+        
+        df['Date'] = pd.to_datetime(df['time'], unit='s')
+        df = df.set_index('Date')
+        btc_series = df['close'].astype(float).sort_index()
+        
+        print(f"✅ Successfully fetched {len(btc_series)} days of live BTC data from Coinbase")
+        return btc_series
+        
+    except Exception as e:
+        print(f"⚠️  Coinbase API failed: {e}")
+    
+    # Method 3: Local CSV fallback
     try:
         csv_files = ["btc_history_backup.csv", "btc_history.csv"]
         for csv_file in csv_files:
@@ -150,10 +185,10 @@ def load_btc_history() -> pd.Series:
     except Exception as e:
         print(f"⚠️  CSV loading failed: {e}")
     
-    # Method 3: yfinance fallback (if available)
+    # Method 4: yfinance fallback (if available)
     if ONLINE:
         try:
-            print("📡 Trying yfinance as backup...")
+            print("📡 Trying yfinance as final backup...")
             btc = yf.download("BTC-USD", start="2010-07-17", progress=False)
             if not btc.empty and 'Adj Close' in btc.columns:
                 prices = btc["Adj Close"].dropna()
@@ -163,7 +198,7 @@ def load_btc_history() -> pd.Series:
         except Exception as e:
             print(f"⚠️  yfinance backup failed: {e}")
     
-    # Method 4: Synthetic data (last resort)
+    # Method 5: Synthetic data (last resort)
     print("📊 All real data sources failed, falling back to synthetic data...")
     return generate_synthetic_btc_data()
 
