@@ -108,112 +108,105 @@ def test_coingecko_api(api_key: str) -> bool:
         print(f"⚠️  CoinGecko API test failed: {e}")
         return False
 
-def fetch_full_btc_history(years: int = 10) -> pd.Series:
+def fetch_robust_btc_history() -> pd.Series:
     """
-    Fetches a long-term history of daily BTC closing prices from the
-    Binance public API by fetching data in 1000-day chunks.
-
-    Args:
-        years: The number of years of history to retrieve.
-
-    Returns:
-        A pandas Series with daily closing prices indexed by date.
+    Fetches long-term BTC history using a tiered approach.
+    Tier 1: Nasdaq Data Link (Brave New Coin dataset) - Best for 10+ years
+    Tier 2: Kraken API - US-compliant exchange, requires looping
     """
-    print(f"📈 Fetching the last {years} years of BTC history from Binance...")
     
-    # Binance API parameters
-    url = "https://api.binance.com/api/v3/klines"
-    symbol = 'BTCUSDT'
-    interval = '1d'
-    limit = 1000  # Max limit per request
-    
-    # Calculate the start date
-    from datetime import datetime
-    import time
-    
-    end_ts = int(datetime.now().timestamp() * 1000)
-    
-    all_data = []
-    
-    while len(all_data) < (years * 365):
-        params = {
-            'symbol': symbol,
-            'interval': interval,
-            'endTime': end_ts,
-            'limit': limit
-        }
+    # --- Tier 1: Nasdaq Data Link (Best Method) ---
+    print("📈 Tier 1: Attempting to fetch data from Nasdaq Data Link (Brave New Coin)...")
+    try:
+        import nasdaqdatalink
         
-        try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            
-            response = requests.get(url, params=params, headers=headers, timeout=15)
+        # Try to use environment variable for API key, fallback to default
+        api_key = os.environ.get('NASDAQ_API_KEY', 'YOUR_NASDAQ_API_KEY_HERE')
+        nasdaqdatalink.api_key = api_key
+        
+        # Code 'BNC/BLX' is for the Bitcoin Liquid Index
+        df = nasdaqdatalink.get("BNC/BLX", start_date="2010-01-01")
+        btc_series = df['Value'].astype(float)
+        print(f"✅ Successfully fetched {len(btc_series)} days of data from Nasdaq.")
+        return btc_series
+    except Exception as e:
+        print(f"⚠️ Nasdaq API call failed: {e}. Trying Kraken...")
+
+    # --- Tier 2: Kraken API (Good Backup) ---
+    print("\n📈 Tier 2: Attempting to fetch data from Kraken API...")
+    try:
+        import time
+        
+        url = "https://api.kraken.com/0/public/OHLC"
+        params = {'pair': 'XBTUSD', 'interval': 1440}  # 1440 minutes = 1 day
+        all_data = []
+        
+        # Kraken's API paginates with a 'since' parameter
+        # We'll make a few calls to get over 1000 days of data
+        for i in range(5):  # Loop 5 times to get ~10 years of data
+            response = requests.get(url, params=params, timeout=15)
             response.raise_for_status()
             data = response.json()
             
-            if not data:
-                # No more data to fetch
+            if 'result' not in data:
+                print(f"⚠️ Unexpected Kraken response format: {data}")
+                break
+            
+            pair_name = list(data['result'].keys())[0] if data['result'] else None
+            if not pair_name or pair_name == 'last':
                 break
                 
-            all_data.extend(data)
+            ohlc_data = data['result'][pair_name]
+            all_data.extend(ohlc_data)
             
-            # The new end_ts is the timestamp of the oldest record fetched
-            oldest_point = data[0]
-            end_ts = oldest_point[0] - 1  # Subtract 1ms to avoid overlap
+            # The 'last' timestamp tells us where the next page should start
+            if 'last' in data['result']:
+                last_ts = data['result']['last']
+                params['since'] = last_ts
+            else:
+                break
             
-            print(f"  📥 Fetched {len(data)} records, going back to {datetime.fromtimestamp(end_ts/1000).strftime('%Y-%m-%d')}...")
+            print(f"  📥 Fetched {len(ohlc_data)} records from Kraken (batch {i+1}/5)...")
+            time.sleep(1)  # Be polite to the API
+        
+        if all_data:
+            df = pd.DataFrame(all_data, columns=['time', 'open', 'high', 'low', 'close', 'vwap', 'volume', 'count'])
+            df['Date'] = pd.to_datetime(df['time'], unit='s')
+            df = df.set_index('Date')
+            df = df[~df.index.duplicated(keep='first')].sort_index()
+            btc_series = df['close'].astype(float)
             
-            # Be polite to the API
-            time.sleep(0.5)
-
-        except requests.exceptions.RequestException as e:
-            print(f"❌ API call failed: {e}")
-            return None
+            print(f"✅ Successfully fetched {len(btc_series)} days of data from Kraken.")
+            return btc_series
+        else:
+            print("⚠️ No data received from Kraken")
             
-    if not all_data:
-        return None
-
-    # Process the combined data
-    df = pd.DataFrame(all_data, columns=[
-        'timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time',
-        'quote_asset_volume', 'number_of_trades', 'taker_buy_base_asset_volume',
-        'taker_buy_quote_asset_volume', 'ignore'
-    ])
+    except Exception as e:
+        print(f"⚠️ Kraken API failed: {e}")
     
-    df['Date'] = pd.to_datetime(df['timestamp'], unit='ms')
-    df = df.set_index('Date')
-    
-    # Remove duplicates and sort chronologically
-    df = df[~df.index.duplicated(keep='first')]
-    df = df.sort_index()
-    
-    btc_series = df['close'].astype(float)
-    
-    print(f"\n✅ Successfully fetched a total of {len(btc_series)} days of data.")
-    print(f"📅 Date range: {btc_series.index[0].strftime('%Y-%m-%d')} to {btc_series.index[-1].strftime('%Y-%m-%d')}")
-    return btc_series
+    return None
 
 def load_btc_history() -> pd.Series:
     """
     Fetches daily Bitcoin closing prices using the most reliable 2025 methods.
     
-    Tier 1: Binance API with chunked requests (primary)
-    Tier 2: Local CSV fallback  
-    Tier 3: Synthetic data (last resort)
+    Tier 1: Nasdaq Data Link (Brave New Coin) - Primary (US-compliant, 10+ years)
+    Tier 2: Kraken API - Secondary (US-compliant exchange)
+    Tier 3: Local CSV fallback  
+    Tier 4: Synthetic data (last resort)
     """
     
-    # Method 1: Binance API with chunked requests for 10 years (Primary)
-    print("📡 Attempting to fetch 10 years of BTC data from Binance API...")
+    # Method 1: Robust multi-tier API approach (Primary)
+    print("📡 Attempting to fetch 10+ years of BTC data using robust methods...")
     try:
-        btc_series = fetch_full_btc_history(years=10)
+        btc_series = fetch_robust_btc_history()
         if btc_series is not None and len(btc_series) > 100:
             return btc_series
         else:
-            print("⚠️  Binance returned insufficient data")
+            print("⚠️ All API methods returned insufficient data")
             
     except Exception as e:
-        print(f"⚠️  Binance chunked API failed: {e}")
+        print(f"⚠️ Robust API methods failed: {e}")
     
     # DISABLED: Method 2: CoinGecko API with Demo key (Primary) - Chunked requests for 10 years
     # print("📡 Attempting to fetch live BTC data from CoinGecko API in chunks...")
