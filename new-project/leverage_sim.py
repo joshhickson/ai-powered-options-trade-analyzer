@@ -108,183 +108,244 @@ def test_coingecko_api(api_key: str) -> bool:
         print(f"⚠️  CoinGecko API test failed: {e}")
         return False
 
+def fetch_full_btc_history(years: int = 10) -> pd.Series:
+    """
+    Fetches a long-term history of daily BTC closing prices from the
+    Binance public API by fetching data in 1000-day chunks.
+
+    Args:
+        years: The number of years of history to retrieve.
+
+    Returns:
+        A pandas Series with daily closing prices indexed by date.
+    """
+    print(f"📈 Fetching the last {years} years of BTC history from Binance...")
+    
+    # Binance API parameters
+    url = "https://api.binance.com/api/v3/klines"
+    symbol = 'BTCUSDT'
+    interval = '1d'
+    limit = 1000  # Max limit per request
+    
+    # Calculate the start date
+    from datetime import datetime
+    import time
+    
+    end_ts = int(datetime.now().timestamp() * 1000)
+    
+    all_data = []
+    
+    while len(all_data) < (years * 365):
+        params = {
+            'symbol': symbol,
+            'interval': interval,
+            'endTime': end_ts,
+            'limit': limit
+        }
+        
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            
+            response = requests.get(url, params=params, headers=headers, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            
+            if not data:
+                # No more data to fetch
+                break
+                
+            all_data.extend(data)
+            
+            # The new end_ts is the timestamp of the oldest record fetched
+            oldest_point = data[0]
+            end_ts = oldest_point[0] - 1  # Subtract 1ms to avoid overlap
+            
+            print(f"  📥 Fetched {len(data)} records, going back to {datetime.fromtimestamp(end_ts/1000).strftime('%Y-%m-%d')}...")
+            
+            # Be polite to the API
+            time.sleep(0.5)
+
+        except requests.exceptions.RequestException as e:
+            print(f"❌ API call failed: {e}")
+            return None
+            
+    if not all_data:
+        return None
+
+    # Process the combined data
+    df = pd.DataFrame(all_data, columns=[
+        'timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time',
+        'quote_asset_volume', 'number_of_trades', 'taker_buy_base_asset_volume',
+        'taker_buy_quote_asset_volume', 'ignore'
+    ])
+    
+    df['Date'] = pd.to_datetime(df['timestamp'], unit='ms')
+    df = df.set_index('Date')
+    
+    # Remove duplicates and sort chronologically
+    df = df[~df.index.duplicated(keep='first')]
+    df = df.sort_index()
+    
+    btc_series = df['close'].astype(float)
+    
+    print(f"\n✅ Successfully fetched a total of {len(btc_series)} days of data.")
+    print(f"📅 Date range: {btc_series.index[0].strftime('%Y-%m-%d')} to {btc_series.index[-1].strftime('%Y-%m-%d')}")
+    return btc_series
+
 def load_btc_history() -> pd.Series:
     """
     Fetches daily Bitcoin closing prices using the most reliable 2025 methods.
     
-    Tier 1: CoinGecko API with Demo key (primary)
-    Tier 2: Coinbase public API (backup)
-    Tier 3: Local CSV fallback
-    Tier 4: Synthetic data (last resort)
+    Tier 1: Binance API with chunked requests (primary)
+    Tier 2: Local CSV fallback  
+    Tier 3: Synthetic data (last resort)
     """
     
-    # Method 1: CoinGecko API with Demo key (Primary) - Chunked requests for 10 years
-    print("📡 Attempting to fetch live BTC data from CoinGecko API in chunks...")
+    # Method 1: Binance API with chunked requests for 10 years (Primary)
+    print("📡 Attempting to fetch 10 years of BTC data from Binance API...")
     try:
-        import requests
-        import time
-        from datetime import datetime, timedelta
-        
-        # Your CoinGecko Demo API key
-        API_KEY = "CG-WCcgxgiuhnov31LZB6FzgaB4"
-        
-        # Test API key first
-        if not test_coingecko_api(API_KEY):
-            raise Exception("API key test failed")
-        
-        headers = {
-            'accept': 'application/json',
-            'x-cg-demo-api-key': API_KEY,
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        all_price_data = []
-        
-        # Request data in 350-day chunks (slightly under 365 to be safe)
-        # Go back 10 years = ~3650 days, so we need about 10-11 chunks
-        chunk_days = 350
-        total_days = 3650  # 10 years
-        num_chunks = (total_days // chunk_days) + 1
-        
-        print(f"📊 Fetching {total_days} days in {num_chunks} chunks of {chunk_days} days each...")
-        
-        for chunk in range(num_chunks):
-            days_from_now = chunk * chunk_days
-            
-            # For the last chunk, calculate remaining days
-            if chunk == num_chunks - 1:
-                remaining_days = total_days - (chunk * chunk_days)
-                if remaining_days <= 0:
-                    break
-                days_to_request = min(remaining_days, chunk_days)
-            else:
-                days_to_request = chunk_days
-            
-            print(f"  📥 Chunk {chunk + 1}/{num_chunks}: Requesting {days_to_request} days from {days_from_now} days ago...")
-            
-            # Calculate the date range for this chunk
-            end_date = datetime.now() - timedelta(days=days_from_now)
-            start_date = end_date - timedelta(days=days_to_request)
-            
-            url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range"
-            params = {
-                'vs_currency': 'usd',
-                'from': int(start_date.timestamp()),
-                'to': int(end_date.timestamp())
-            }
-            
-            # Add delay between requests to respect rate limits
-            if chunk > 0:
-                time.sleep(2)  # 2-second delay between chunks
-            
-            response = requests.get(url, params=params, headers=headers, timeout=20)
-            response.raise_for_status()
-            
-            data = response.json()
-            if 'prices' in data and len(data['prices']) > 0:
-                chunk_prices = data['prices']
-                all_price_data.extend(chunk_prices)
-                print(f"    ✅ Got {len(chunk_prices)} price points")
-            else:
-                print(f"    ⚠️  Empty data for chunk {chunk + 1}")
-        
-        if all_price_data:
-            # Process all combined price data
-            df = pd.DataFrame(all_price_data, columns=['timestamp', 'price'])
-            
-            # Convert timestamp to datetime and set as index
-            df['Date'] = pd.to_datetime(df['timestamp'], unit='ms')
-            df = df.set_index('Date')
-            
-            # Remove duplicates and sort
-            df = df[~df.index.duplicated(keep='first')].sort_index()
-            
-            # Return price series
-            btc_series = df['price'].astype(float)
-            
-            print(f"✅ Successfully fetched {len(btc_series)} days of live BTC data from CoinGecko (chunked)")
-            print(f"📅 Date range: {btc_series.index.min().strftime('%Y-%m-%d')} to {btc_series.index.max().strftime('%Y-%m-%d')}")
+        btc_series = fetch_full_btc_history(years=10)
+        if btc_series is not None and len(btc_series) > 100:
             return btc_series
         else:
-            print("⚠️  CoinGecko returned no price data across all chunks")
+            print("⚠️  Binance returned insufficient data")
             
-    except requests.exceptions.HTTPError as http_err:
-        print(f"⚠️  CoinGecko HTTP Error: {http_err}")
-        if hasattr(http_err, 'response'):
-            print(f"    Status Code: {http_err.response.status_code}")
-            print(f"    Response Body: {http_err.response.text}")
-            if http_err.response.status_code == 401:
-                print("    This suggests an API key issue - please verify your key is correct")
-            elif http_err.response.status_code == 429:
-                print("    Rate limit exceeded - try increasing delays between chunks")
     except Exception as e:
-        print(f"⚠️  CoinGecko chunked API failed: {e}")
+        print(f"⚠️  Binance chunked API failed: {e}")
     
-    # Method 2: Binance API (Backup) - 1000 days
-    print("📡 Trying Binance API as backup...")
-    try:
-        import requests
-        
-        url = "https://api.binance.com/api/v3/klines"
-        params = {
-            'symbol': 'BTCUSDT',
-            'interval': '1d',
-            'limit': 1000  # Maximum allowed by Binance, gets ~2.7 years
-        }
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        
-        response = requests.get(url, params=params, headers=headers, timeout=15)
-        response.raise_for_status()
-        
-        data = response.json()
-        df = pd.DataFrame(data, columns=[
-            'timestamp', 'open', 'high', 'low', 'close', 'volume',
-            'close_timestamp', 'quote_volume', 'trades_count',
-            'taker_buy_base_volume', 'taker_buy_quote_volume', 'ignore'
-        ])
-        
-        df['Date'] = pd.to_datetime(df['timestamp'], unit='ms')
-        df = df.set_index('Date')
-        btc_series = df['close'].astype(float).sort_index()
-        
-        print(f"✅ Successfully fetched {len(btc_series)} days of live BTC data from Binance")
-        return btc_series
-        
-    except Exception as e:
-        print(f"⚠️  Binance API failed: {e}")
+    # DISABLED: Method 2: CoinGecko API with Demo key (Primary) - Chunked requests for 10 years
+    # print("📡 Attempting to fetch live BTC data from CoinGecko API in chunks...")
+    # try:
+    #     import requests
+    #     import time
+    #     from datetime import datetime, timedelta
+    #     
+    #     # Your CoinGecko Demo API key
+    #     API_KEY = "CG-WCcgxgiuhnov31LZB6FzgaB4"
+    #     
+    #     # Test API key first
+    #     if not test_coingecko_api(API_KEY):
+    #         raise Exception("API key test failed")
+    #     
+    #     headers = {
+    #         'accept': 'application/json',
+    #         'x-cg-demo-api-key': API_KEY,
+    #         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    #     }
+    #     
+    #     all_price_data = []
+    #     
+    #     # Request data in 350-day chunks (slightly under 365 to be safe)
+    #     # Go back 10 years = ~3650 days, so we need about 10-11 chunks
+    #     chunk_days = 350
+    #     total_days = 3650  # 10 years
+    #     num_chunks = (total_days // chunk_days) + 1
+    #     
+    #     print(f"📊 Fetching {total_days} days in {num_chunks} chunks of {chunk_days} days each...")
+    #     
+    #     for chunk in range(num_chunks):
+    #         days_from_now = chunk * chunk_days
+    #         
+    #         # For the last chunk, calculate remaining days
+    #         if chunk == num_chunks - 1:
+    #             remaining_days = total_days - (chunk * chunk_days)
+    #             if remaining_days <= 0:
+    #                 break
+    #             days_to_request = min(remaining_days, chunk_days)
+    #         else:
+    #             days_to_request = chunk_days
+    #         
+    #         print(f"  📥 Chunk {chunk + 1}/{num_chunks}: Requesting {days_to_request} days from {days_from_now} days ago...")
+    #         
+    #         # Calculate the date range for this chunk
+    #         end_date = datetime.now() - timedelta(days=days_from_now)
+    #         start_date = end_date - timedelta(days=days_to_request)
+    #         
+    #         url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range"
+    #         params = {
+    #             'vs_currency': 'usd',
+    #             'from': int(start_date.timestamp()),
+    #             'to': int(end_date.timestamp())
+    #         }
+    #         
+    #         # Add delay between requests to respect rate limits
+    #         if chunk > 0:
+    #             time.sleep(2)  # 2-second delay between chunks
+    #         
+    #         response = requests.get(url, params=params, headers=headers, timeout=20)
+    #         response.raise_for_status()
+    #         
+    #         data = response.json()
+    #         if 'prices' in data and len(data['prices']) > 0:
+    #             chunk_prices = data['prices']
+    #             all_price_data.extend(chunk_prices)
+    #             print(f"    ✅ Got {len(chunk_prices)} price points")
+    #         else:
+    #             print(f"    ⚠️  Empty data for chunk {chunk + 1}")
+    #     
+    #     if all_price_data:
+    #         # Process all combined price data
+    #         df = pd.DataFrame(all_price_data, columns=['timestamp', 'price'])
+    #         
+    #         # Convert timestamp to datetime and set as index
+    #         df['Date'] = pd.to_datetime(df['timestamp'], unit='ms')
+    #         df = df.set_index('Date')
+    #         
+    #         # Remove duplicates and sort
+    #         df = df[~df.index.duplicated(keep='first')].sort_index()
+    #         
+    #         # Return price series
+    #         btc_series = df['price'].astype(float)
+    #         
+    #         print(f"✅ Successfully fetched {len(btc_series)} days of live BTC data from CoinGecko (chunked)")
+    #         print(f"📅 Date range: {btc_series.index.min().strftime('%Y-%m-%d')} to {btc_series.index.max().strftime('%Y-%m-%d')}")
+    #         return btc_series
+    #     else:
+    #         print("⚠️  CoinGecko returned no price data across all chunks")
+    #         
+    # except requests.exceptions.HTTPError as http_err:
+    #     print(f"⚠️  CoinGecko HTTP Error: {http_err}")
+    #     if hasattr(http_err, 'response'):
+    #         print(f"    Status Code: {http_err.response.status_code}")
+    #         print(f"    Response Body: {http_err.response.text}")
+    #         if http_err.response.status_code == 401:
+    #             print("    This suggests an API key issue - please verify your key is correct")
+    #         elif http_err.response.status_code == 429:
+    #             print("    Rate limit exceeded - try increasing delays between chunks")
+    # except Exception as e:
+    #     print(f"⚠️  CoinGecko chunked API failed: {e}")
     
-    # Method 3: Coinbase API (Secondary Backup)
-    print("📡 Trying Coinbase API as secondary backup...")
-    try:
-        import requests
-        
-        url = "https://api.exchange.coinbase.com/products/BTC-USD/candles"
-        params = {
-            'granularity': 86400  # 86400 seconds = 1 day
-        }
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        response = requests.get(url, params=params, headers=headers, timeout=15)
-        response.raise_for_status()
-        
-        data = response.json()
-        df = pd.DataFrame(data, columns=['time', 'low', 'high', 'open', 'close', 'volume'])
-        
-        df['Date'] = pd.to_datetime(df['time'], unit='s')
-        df = df.set_index('Date')
-        btc_series = df['close'].astype(float).sort_index()
-        
-        print(f"✅ Successfully fetched {len(btc_series)} days of live BTC data from Coinbase")
-        return btc_series
-        
-    except Exception as e:
-        print(f"⚠️  Coinbase API failed: {e}")
+    # DISABLED: Method 3: Coinbase API (Secondary Backup)
+    # print("📡 Trying Coinbase API as secondary backup...")
+    # try:
+    #     import requests
+    #     
+    #     url = "https://api.exchange.coinbase.com/products/BTC-USD/candles"
+    #     params = {
+    #         'granularity': 86400  # 86400 seconds = 1 day
+    #     }
+    #     
+    #     headers = {
+    #         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    #     }
+    #     
+    #     response = requests.get(url, params=params, headers=headers, timeout=15)
+    #     response.raise_for_status()
+    #     
+    #     data = response.json()
+    #     df = pd.DataFrame(data, columns=['time', 'low', 'high', 'open', 'close', 'volume'])
+    #     
+    #     df['Date'] = pd.to_datetime(df['time'], unit='s')
+    #     df = df.set_index('Date')
+    #     btc_series = df['close'].astype(float).sort_index()
+    #     
+    #     print(f"✅ Successfully fetched {len(btc_series)} days of live BTC data from Coinbase")
+    #     return btc_series
+    #     
+    # except Exception as e:
+    #     print(f"⚠️  Coinbase API failed: {e}")
     
     # Method 4: Local CSV fallback
     try:
