@@ -169,10 +169,10 @@ else:
         bins = np.linspace(min_price, max_price, n_bins)
     
     draw_df["bin"] = pd.cut(draw_df.price, bins=bins)
-bin_stats = draw_df.groupby("bin").agg(
-        p=("price", "median"),
-        d99=("draw", lambda x: np.percentile(x, 1))  # 1st percentile = worst 1%
-    ).dropna()
+    bin_stats = draw_df.groupby("bin").agg(
+            p=("price", "median"),
+            d99=("draw", lambda x: np.percentile(x, 1))  # 1st percentile = worst 1%
+        ).dropna()
     
     if len(bin_stats) < 3:
         print("⚠️  Insufficient binned data, using simple drawdown model...")
