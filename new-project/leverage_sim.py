@@ -133,7 +133,7 @@ def load_btc_history() -> pd.Series:
         url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
         params = {
             'vs_currency': 'usd',
-            'days': '365',          # Start with smaller dataset for testing
+            'days': 'max',          # Get all available historical data
             'interval': 'daily'
         }
         
