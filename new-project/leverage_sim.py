@@ -118,14 +118,14 @@ def fetch_robust_btc_history() -> pd.Series:
     # --- Tier 1: Nasdaq Data Link (Best Method) ---
     print("📈 Tier 1: Attempting to fetch data from Nasdaq Data Link (Brave New Coin)...")
     try:
-        import nasdaqdatalink
+        import nasdaqdatalink as ndl
         
         # Try to use environment variable for API key, fallback to default
         api_key = os.environ.get('NASDAQ_API_KEY', 'YOUR_NASDAQ_API_KEY_HERE')
-        nasdaqdatalink.api_key = api_key
+        ndl.api_key = api_key
         
         # Code 'BNC/BLX' is for the Bitcoin Liquid Index
-        df = nasdaqdatalink.get("BNC/BLX", start_date="2010-01-01")
+        df = ndl.get("BNC/BLX", start_date="2010-01-01")
         btc_series = df['Value'].astype(float)
         print(f"✅ Successfully fetched {len(btc_series)} days of data from Nasdaq.")
         return btc_series
