@@ -1,0 +1,71 @@
+~/workspace$ cd new-project
+~/workspace/new-project$ python3 leverage_sim.py
+📡 Attempting to fetch live BTC data from Binance API...
+⚠️  Binance API failed: 451 Client Error:  for url: https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000
+📡 Trying Coinbase API as backup...
+✅ Successfully fetched 350 days of live BTC data from Coinbase
+📊 Price range for analysis: $53950 to $89922
+📊 Found 147 recovery cycles for analysis
+/home/runner/workspace/new-project/leverage_sim.py:272: FutureWarning: The default of observed=False is deprecated and will be changed to True in a future version of pandas. Pass observed=False to retain current behavior or observed=True to adopt the future default and silence this warning.
+  bin_stats = draw_df.groupby("bin").agg(
+Traceback (most recent call last):
+  File "/home/runner/workspace/new-project/leverage_sim.py", line 272, in <module>
+    bin_stats = draw_df.groupby("bin").agg(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/nix/store/a4rihhw5j33rswdlhl9fll9jx5gk8bgi-python3.11-pandas-2.2.1/lib/python3.11/site-packages/pandas/core/groupby/generic.py", line 1432, in aggregate
+    result = op.agg()
+             ^^^^^^^^
+  File "/nix/store/a4rihhw5j33rswdlhl9fll9jx5gk8bgi-python3.11-pandas-2.2.1/lib/python3.11/site-packages/pandas/core/apply.py", line 190, in agg
+    return self.agg_dict_like()
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/nix/store/a4rihhw5j33rswdlhl9fll9jx5gk8bgi-python3.11-pandas-2.2.1/lib/python3.11/site-packages/pandas/core/apply.py", line 423, in agg_dict_like
+    return self.agg_or_apply_dict_like(op_name="agg")
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/nix/store/a4rihhw5j33rswdlhl9fll9jx5gk8bgi-python3.11-pandas-2.2.1/lib/python3.11/site-packages/pandas/core/apply.py", line 1608, in agg_or_apply_dict_like
+    result_index, result_data = self.compute_dict_like(
+                                ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/nix/store/a4rihhw5j33rswdlhl9fll9jx5gk8bgi-python3.11-pandas-2.2.1/lib/python3.11/site-packages/pandas/core/apply.py", line 496, in compute_dict_like
+    results = [
+              ^
+  File "/nix/store/a4rihhw5j33rswdlhl9fll9jx5gk8bgi-python3.11-pandas-2.2.1/lib/python3.11/site-packages/pandas/core/apply.py", line 497, in <listcomp>
+    getattr(obj._gotitem(key, ndim=1), op_name)(how, **kwargs)
+  File "/nix/store/a4rihhw5j33rswdlhl9fll9jx5gk8bgi-python3.11-pandas-2.2.1/lib/python3.11/site-packages/pandas/core/groupby/generic.py", line 257, in aggregate
+    ret = self._aggregate_multiple_funcs(func, *args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/nix/store/a4rihhw5j33rswdlhl9fll9jx5gk8bgi-python3.11-pandas-2.2.1/lib/python3.11/site-packages/pandas/core/groupby/generic.py", line 362, in _aggregate_multiple_funcs
+    results[key] = self.aggregate(func, *args, **kwargs)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/nix/store/a4rihhw5j33rswdlhl9fll9jx5gk8bgi-python3.11-pandas-2.2.1/lib/python3.11/site-packages/pandas/core/groupby/generic.py", line 294, in aggregate
+    return self._python_agg_general(func, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/nix/store/a4rihhw5j33rswdlhl9fll9jx5gk8bgi-python3.11-pandas-2.2.1/lib/python3.11/site-packages/pandas/core/groupby/generic.py", line 327, in _python_agg_general
+    result = self._grouper.agg_series(obj, f)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/nix/store/a4rihhw5j33rswdlhl9fll9jx5gk8bgi-python3.11-pandas-2.2.1/lib/python3.11/site-packages/pandas/core/groupby/ops.py", line 864, in agg_series
+    result = self._aggregate_series_pure_python(obj, func)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/nix/store/a4rihhw5j33rswdlhl9fll9jx5gk8bgi-python3.11-pandas-2.2.1/lib/python3.11/site-packages/pandas/core/groupby/ops.py", line 885, in _aggregate_series_pure_python
+    res = func(group)
+          ^^^^^^^^^^^
+  File "/nix/store/a4rihhw5j33rswdlhl9fll9jx5gk8bgi-python3.11-pandas-2.2.1/lib/python3.11/site-packages/pandas/core/groupby/generic.py", line 324, in <lambda>
+    f = lambda x: func(x, *args, **kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/workspace/new-project/leverage_sim.py", line 274, in <lambda>
+    d99=("draw", lambda x: np.percentile(x, 1))  # 1st percentile = worst 1%
+                           ^^^^^^^^^^^^^^^^^^^
+  File "/nix/store/ylvsb39l0wq5q6xdphrq35an6dxqhjw9-python3.11-numpy-1.26.4/lib/python3.11/site-packages/numpy/lib/function_base.py", line 4283, in percentile
+    return _quantile_unchecked(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/nix/store/ylvsb39l0wq5q6xdphrq35an6dxqhjw9-python3.11-numpy-1.26.4/lib/python3.11/site-packages/numpy/lib/function_base.py", line 4555, in _quantile_unchecked
+    return _ureduce(a,
+           ^^^^^^^^^^^
+  File "/nix/store/ylvsb39l0wq5q6xdphrq35an6dxqhjw9-python3.11-numpy-1.26.4/lib/python3.11/site-packages/numpy/lib/function_base.py", line 3823, in _ureduce
+    r = func(a, **kwargs)
+        ^^^^^^^^^^^^^^^^^
+  File "/nix/store/ylvsb39l0wq5q6xdphrq35an6dxqhjw9-python3.11-numpy-1.26.4/lib/python3.11/site-packages/numpy/lib/function_base.py", line 4722, in _quantile_ureduce_func
+    result = _quantile(arr,
+             ^^^^^^^^^^^^^^
+  File "/nix/store/ylvsb39l0wq5q6xdphrq35an6dxqhjw9-python3.11-numpy-1.26.4/lib/python3.11/site-packages/numpy/lib/function_base.py", line 4831, in _quantile
+    slices_having_nans = np.isnan(arr[-1, ...])
+                                  ~~~^^^^^^^^^
+IndexError: index -1 is out of bounds for axis 0 with size 0
