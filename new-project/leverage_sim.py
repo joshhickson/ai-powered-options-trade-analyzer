@@ -87,16 +87,65 @@ def load_btc_history() -> pd.Series:
     """
     Fetches daily Bitcoin closing prices using the most reliable 2025 methods.
     
-    Tier 1: Binance public API (no key needed, most reliable)
+    Tier 1: CoinGecko API with Demo key (primary)
     Tier 2: Coinbase public API (backup)
     Tier 3: Local CSV fallback
     Tier 4: Synthetic data (last resort)
     """
     
-    # Method 1: Binance API (DISABLED - was failing with 451 errors)
-    # print("📡 Attempting to fetch live BTC data from Binance API...")
+    # Method 1: CoinGecko API with Demo key (Primary)
+    print("📡 Attempting to fetch live BTC data from CoinGecko API...")
+    try:
+        import requests
+        
+        # Your CoinGecko Demo API key
+        API_KEY = "CG-WCcgxgiuhnov31LZB6FzgaB4"
+        
+        url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
+        params = {
+            'vs_currency': 'usd',
+            'days': 'max',          # Get all available historical data
+            'interval': 'daily',
+            'x_cg_demo_api_key': API_KEY
+        }
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        response = requests.get(url, params=params, headers=headers, timeout=20)
+        response.raise_for_status()
+        
+        data = response.json()
+        if 'prices' in data and len(data['prices']) > 0:
+            # Process the price data - CoinGecko returns [timestamp_ms, price] pairs
+            price_data = data['prices']
+            df = pd.DataFrame(price_data, columns=['timestamp', 'price'])
+            
+            # Convert timestamp to datetime and set as index
+            df['Date'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df = df.set_index('Date')
+            
+            # Return price series
+            btc_series = df['price'].astype(float).sort_index()
+            
+            print(f"✅ Successfully fetched {len(btc_series)} days of live BTC data from CoinGecko")
+            return btc_series
+        else:
+            print("⚠️  CoinGecko returned empty price data")
+            
+    except requests.exceptions.HTTPError as http_err:
+        print(f"⚠️  CoinGecko HTTP Error: {http_err}")
+        if hasattr(http_err, 'response'):
+            print(f"    Status Code: {http_err.response.status_code}")
+            if http_err.response.status_code == 401:
+                print("    This suggests an API key issue - please verify your key is correct")
+            elif http_err.response.status_code == 429:
+                print("    Rate limit exceeded - too many requests")
+    except Exception as e:
+        print(f"⚠️  CoinGecko API failed: {e}")
     
-    # Method 2: Coinbase API (Primary)
+    # Method 2: Coinbase API (Backup)
     print("📡 Trying Coinbase API as backup...")
     try:
         import requests
