@@ -83,6 +83,31 @@ def generate_synthetic_btc_data():
     
     return pd.Series(prices, index=dates, name='Close')
 
+def test_coingecko_api(api_key: str) -> bool:
+    """Test CoinGecko API connection with a simple ping endpoint."""
+    try:
+        import requests
+        
+        # Test with ping endpoint first
+        ping_url = "https://api.coingecko.com/api/v3/ping"
+        headers = {
+            'accept': 'application/json',
+            'x-cg-demo-api-key': api_key,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        response = requests.get(ping_url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            print("✅ CoinGecko API key is working!")
+            return True
+        else:
+            print(f"⚠️  CoinGecko ping failed: {response.status_code}")
+            print(f"    Response: {response.text}")
+            return False
+    except Exception as e:
+        print(f"⚠️  CoinGecko API test failed: {e}")
+        return False
+
 def load_btc_history() -> pd.Series:
     """
     Fetches daily Bitcoin closing prices using the most reliable 2025 methods.
@@ -101,15 +126,20 @@ def load_btc_history() -> pd.Series:
         # Your CoinGecko Demo API key
         API_KEY = "CG-WCcgxgiuhnov31LZB6FzgaB4"
         
+        # Test API key first
+        if not test_coingecko_api(API_KEY):
+            raise Exception("API key test failed")
+        
         url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
         params = {
             'vs_currency': 'usd',
-            'days': 'max',          # Get all available historical data
-            'interval': 'daily',
-            'x_cg_demo_api_key': API_KEY
+            'days': '365',          # Start with smaller dataset for testing
+            'interval': 'daily'
         }
         
         headers = {
+            'accept': 'application/json',
+            'x-cg-demo-api-key': API_KEY,  # Correct placement in headers
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         
@@ -138,6 +168,7 @@ def load_btc_history() -> pd.Series:
         print(f"⚠️  CoinGecko HTTP Error: {http_err}")
         if hasattr(http_err, 'response'):
             print(f"    Status Code: {http_err.response.status_code}")
+            print(f"    Response Body: {http_err.response.text}")
             if http_err.response.status_code == 401:
                 print("    This suggests an API key issue - please verify your key is correct")
             elif http_err.response.status_code == 429:
