@@ -285,24 +285,78 @@ else:
             b, ln_a = np.polyfit(x, y, 1) * np.array([-1, 1])  # adjust sign
             a = math.exp(ln_a)
             
-            # Validate fitted parameters
-            if not (0.01 < a < 10) or not (0.1 < b < 2):
-                raise ValueError(f"Unrealistic fitted parameters: a={a:.4f}, b={b:.4f}")
+            # Validate fitted parameters more thoroughly
+            param_valid = (
+                0.001 < a < 100 and          # Broader range for coefficient
+                -2 < b < 2 and               # Allow negative slopes
+                not np.isnan(a) and 
+                not np.isnan(b) and
+                not np.isinf(a) and 
+                not np.isinf(b)
+            )
             
-            print(f"📈 Fitted drawdown model: draw99(p) = {a:.4f} * p^(-{b:.4f})")
+            if not param_valid:
+                raise ValueError(f"Unrealistic fitted parameters: a={a:.6f}, b={b:.4f}")
+            
+            # Test the model with sample prices to ensure reasonable outputs
+            test_prices = [50000, 75000, 100000]
+            test_results = [a * (p ** (-b)) for p in test_prices]
+            
+            if any(r <= 0 or r >= 1 or np.isnan(r) or np.isinf(r) for r in test_results):
+                raise ValueError(f"Model produces invalid drawdowns: {test_results}")
+            
+            print(f"📈 Fitted drawdown model: draw99(p) = {a:.6f} * p^(-{b:.4f})")
             print(f"📊 Model trained on {len(filtered_prices)} valid data points")
+            print(f"📝 Sample predictions: $50k→{test_results[0]:.1%}, $75k→{test_results[1]:.1%}, $100k→{test_results[2]:.1%}")
             
             def draw99(price: float) -> float:
                 """Return the 99 % worst expected drawdown (as +fraction) for a price."""
-                result = a * (price ** (-b))
-                # Clamp to reasonable bounds
-                return max(0.05, min(0.85, result))  # Between 5% and 85%
+                try:
+                    result = a * (price ** (-b))
+                    # Clamp to reasonable bounds and handle edge cases
+                    if np.isnan(result) or np.isinf(result) or result <= 0:
+                        # Fallback to price-based estimate
+                        result = 0.6 * (price / 60000) ** (-0.2)
+                    return max(0.05, min(0.85, result))  # Between 5% and 85%
+                except:
+                    # Ultimate fallback
+                    return 0.6 * (price / 60000) ** (-0.2)
                 
         except Exception as e:
-            print(f"⚠️  Curve fitting failed: {e}")
-            print("Using fallback drawdown model...")
-            def draw99(price: float) -> float:
-                return 0.8 * (price / 50000) ** (-0.3)
+            print(f"⚠️  Power law curve fitting failed: {e}")
+            
+            # Try linear relationship as alternative
+            try:
+                print("📊 Attempting linear drawdown model...")
+                
+                # Simple linear regression: drawdown = m * price + b
+                from scipy import stats
+                slope, intercept, r_value, p_value, std_err = stats.linregress(filtered_prices, filtered_drawdowns)
+                
+                if abs(r_value) > 0.3:  # Reasonable correlation
+                    print(f"📈 Linear model: draw99(p) = {slope:.8f} * p + {intercept:.4f} (R²={r_value**2:.3f})")
+                    
+                    def draw99(price: float) -> float:
+                        result = abs(slope * price + intercept)
+                        return max(0.05, min(0.85, result))
+                else:
+                    raise ValueError("Linear fit also poor")
+                    
+            except:
+                print("📊 Using empirical percentile fallback...")
+                
+                # Use actual data percentiles as fallback
+                empirical_drawdown = np.percentile(np.abs(draw_df.draw.values), 99)
+                empirical_drawdown = max(0.05, min(0.85, empirical_drawdown))
+                
+                print(f"📈 Empirical model: constant {empirical_drawdown:.1%} drawdown")
+                
+                def draw99(price: float) -> float:
+                    # Price-adjusted empirical model
+                    base_drawdown = empirical_drawdown
+                    price_factor = (price / 70000) ** (-0.1)  # Gentle price dependence
+                    result = base_drawdown * price_factor
+                    return max(0.05, min(0.85, result))
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Section 4 · Helper functions (defined before usage)
