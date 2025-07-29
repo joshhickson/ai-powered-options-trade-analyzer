@@ -269,9 +269,16 @@ else:
         bins = np.linspace(min_price, max_price, n_bins)
     
     draw_df["bin"] = pd.cut(draw_df.price, bins=bins)
-    bin_stats = draw_df.groupby("bin").agg(
+    
+    def safe_percentile(x):
+        """Calculate 1st percentile, handling empty groups."""
+        if len(x) == 0:
+            return np.nan
+        return np.percentile(x, 1)
+    
+    bin_stats = draw_df.groupby("bin", observed=False).agg(
             p=("price", "median"),
-            d99=("draw", lambda x: np.percentile(x, 1))  # 1st percentile = worst 1%
+            d99=("draw", safe_percentile)  # 1st percentile = worst 1%
         ).dropna()
     
     if len(bin_stats) < 3:
