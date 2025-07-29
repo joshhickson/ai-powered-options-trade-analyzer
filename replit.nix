@@ -12,4 +12,7 @@
     pkgs.python3Packages.urllib3
     pkgs.python3Packages.setuptools
   ];
+  env = {
+    PYTHONPATH = "${pkgs.python3Packages.pip}/lib/python3.11/site-packages";
+  };
 }
