@@ -770,9 +770,12 @@ while state["free_btc"] < state["btc_goal"]:
     # BTC purchased with loan (assuming instant buy at entry price)
     btc_bought = loan / entry_price
 
-    # Interest lump-sum
-    interest = loan * state["cycle"] * 0  # placeholder (simple loop-year calc)
-    payoff = loan + loan * params["loan_rate"]  # 1-yr APR lump
+    # Interest calculation: 11.5% APR for the cycle duration
+    # For now, assume each cycle takes approximately 1 year
+    # (We'll refine this timing in the next phase)
+    cycle_duration_years = 1.0  # Simplified assumption for now
+    interest = loan * params["loan_rate"] * cycle_duration_years
+    payoff = loan + interest
 
     # Sell BTC equal to payoff
     btc_sold = payoff / exit_price
@@ -785,14 +788,19 @@ while state["free_btc"] < state["btc_goal"]:
     # Step 5: set next loan equal to cap for new price
     state["loan"] = cap_next_loan(exit_price, state["collat_btc"])
 
-    # Log cycle
+    # Log cycle with interest details
     records.append({
         "cycle": state["cycle"],
         "entry_price": entry_price,
         "exit_price": exit_price,
         "loan": loan,
+        "interest_paid": interest,
+        "total_payoff": payoff,
         "needed_cure_btc": needed_btc,
         "btc_free": state["free_btc"],
+        "btc_bought": btc_bought,
+        "btc_sold": btc_sold,
+        "net_btc_gain": gain_btc,
     })
 
     # Safety break
@@ -820,7 +828,20 @@ plt.ylabel("Unencumbered BTC")
 plt.title("BTC Held vs. Cycle")
 plt.savefig("btc_owned_over_cycles.png", dpi=150)
 
-print("Simulation complete.  Files saved:\n"
+# Calculate and display summary statistics
+total_interest = df['interest_paid'].sum()
+total_loans = df['loan'].sum()
+final_btc = df['btc_free'].iloc[-1]
+total_cycles = len(df)
+
+print(f"\n📊 SIMULATION SUMMARY:")
+print(f"   💰 Final BTC Holdings: {final_btc:.4f} BTC")
+print(f"   🔄 Total Cycles: {total_cycles}")
+print(f"   💸 Total Interest Paid: ${total_interest:,.0f}")
+print(f"   📈 Average Loan Size: ${total_loans/total_cycles:,.0f}")
+print(f"   📊 Interest as % of Total Loans: {100*total_interest/total_loans:.1f}%")
+
+print("\nSimulation complete.  Files saved:\n"
       "  • cycles_log.csv\n"
       "  • btc_price_over_cycles.png\n"
       "  • btc_owned_over_cycles.png")
