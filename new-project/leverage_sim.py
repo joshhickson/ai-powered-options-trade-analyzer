@@ -262,101 +262,211 @@ else:
             return 0.8 * (price / 50000) ** (-0.3)
     else:
         try:
-            # Ensure all drawdowns are meaningful negative values
+            # DIAGNOSTIC PHASE - Let's examine the data in detail
             drawdown_values = bin_stats.d99.values
             price_values = bin_stats.p.values
             
+            print(f"🔍 CURVE FITTING DIAGNOSTICS:")
+            print(f"   Raw bins: {len(bin_stats)}")
+            print(f"   Price range: ${price_values.min():.0f} - ${price_values.max():.0f}")
+            print(f"   Drawdown range: {drawdown_values.min():.1%} - {drawdown_values.max():.1%}")
+            print(f"   Sample drawdowns: {drawdown_values[:5]}")
+            print(f"   Sample prices: {price_values[:5]}")
+            
             # Filter out any remaining problematic values
-            valid_mask = (drawdown_values < -0.001) & (price_values > 0)
+            valid_mask = (drawdown_values < -0.001) & (price_values > 0) & np.isfinite(drawdown_values) & np.isfinite(price_values)
             if np.sum(valid_mask) < 3:
-                raise ValueError("Insufficient valid drawdown data")
+                raise ValueError(f"Insufficient valid drawdown data: only {np.sum(valid_mask)} valid points")
             
             filtered_drawdowns = np.abs(drawdown_values[valid_mask])
             filtered_prices = price_values[valid_mask]
+            
+            print(f"   After filtering: {len(filtered_drawdowns)} valid points")
+            print(f"   Filtered drawdown range: {filtered_drawdowns.min():.1%} - {filtered_drawdowns.max():.1%}")
+            
+            # Check if data shows expected power law relationship
+            price_ratio = filtered_prices.max() / filtered_prices.min()
+            drawdown_ratio = filtered_drawdowns.max() / filtered_drawdowns.min()
+            
+            print(f"   Price ratio (max/min): {price_ratio:.1f}x")
+            print(f"   Drawdown ratio (max/min): {drawdown_ratio:.1f}x")
+            
+            if price_ratio < 1.5:
+                raise ValueError(f"Insufficient price variation for power law fit: {price_ratio:.1f}x")
             
             # Fit a log-log linear regression  ln|d| = ln a  – b ln p
             y = np.log(filtered_drawdowns)
             x = np.log(filtered_prices)
             
-            # Final validation
+            print(f"   Log-transformed ranges: x={x.min():.2f} to {x.max():.2f}, y={y.min():.2f} to {y.max():.2f}")
+            
+            # Final validation of log-transformed data
             if np.any(np.isnan(y)) or np.any(np.isnan(x)) or np.any(np.isinf(y)) or np.any(np.isinf(x)):
-                raise ValueError("Invalid data after filtering")
+                raise ValueError("Invalid data after log transformation")
+            
+            # Perform the fit with error checking
+            try:
+                coeffs = np.polyfit(x, y, 1)
+                b, ln_a = coeffs * np.array([-1, 1])  # adjust sign convention
+                a = math.exp(ln_a)
                 
-            b, ln_a = np.polyfit(x, y, 1) * np.array([-1, 1])  # adjust sign
-            a = math.exp(ln_a)
+                # Calculate R-squared for goodness of fit
+                y_pred = coeffs[0] * x + coeffs[1]
+                r_squared = 1 - np.sum((y - y_pred)**2) / np.sum((y - np.mean(y))**2)
+                
+                print(f"   Fit results: a={a:.8f}, b={b:.4f}, R²={r_squared:.3f}")
+                
+            except np.linalg.LinAlgError as e:
+                raise ValueError(f"Linear algebra error in fitting: {e}")
             
-            # Validate fitted parameters more thoroughly
-            param_valid = (
-                0.001 < a < 100 and          # Broader range for coefficient
-                -2 < b < 2 and               # Allow negative slopes
-                not np.isnan(a) and 
-                not np.isnan(b) and
-                not np.isinf(a) and 
-                not np.isinf(b)
-            )
+            # Validate fitted parameters with detailed checks
+            checks = {
+                "a_positive": a > 0,
+                "a_reasonable": 0.0001 < a < 10,
+                "b_finite": np.isfinite(b),
+                "b_reasonable": -1 < b < 3,  # Allow steeper negative slopes
+                "r_squared_ok": r_squared > 0.1  # At least some correlation
+            }
             
-            if not param_valid:
-                raise ValueError(f"Unrealistic fitted parameters: a={a:.6f}, b={b:.4f}")
+            print(f"   Parameter checks: {checks}")
+            
+            failed_checks = [k for k, v in checks.items() if not v]
+            if failed_checks:
+                raise ValueError(f"Parameter validation failed: {failed_checks}")
             
             # Test the model with sample prices to ensure reasonable outputs
-            test_prices = [50000, 75000, 100000]
-            test_results = [a * (p ** (-b)) for p in test_prices]
+            test_prices = [30000, 50000, 75000, 100000, 150000]
+            test_results = []
+            for p in test_prices:
+                try:
+                    result = a * (p ** (-b))
+                    test_results.append(result)
+                except:
+                    test_results.append(float('nan'))
             
-            if any(r <= 0 or r >= 1 or np.isnan(r) or np.isinf(r) for r in test_results):
-                raise ValueError(f"Model produces invalid drawdowns: {test_results}")
+            valid_predictions = [r for r in test_results if 0.01 < r < 0.95 and np.isfinite(r)]
             
-            print(f"📈 Fitted drawdown model: draw99(p) = {a:.6f} * p^(-{b:.4f})")
-            print(f"📊 Model trained on {len(filtered_prices)} valid data points")
-            print(f"📝 Sample predictions: $50k→{test_results[0]:.1%}, $75k→{test_results[1]:.1%}, $100k→{test_results[2]:.1%}")
+            if len(valid_predictions) < 3:
+                raise ValueError(f"Model produces too many invalid predictions: {test_results}")
+            
+            print(f"📈 SUCCESS: Fitted power law model: draw99(p) = {a:.8f} * p^(-{b:.4f})")
+            print(f"📊 Model validation: R²={r_squared:.3f}, {len(filtered_prices)} points")
+            print(f"📝 Test predictions:")
+            for p, r in zip(test_prices, test_results):
+                if np.isfinite(r):
+                    print(f"     ${p/1000:.0f}k → {r:.1%}")
             
             def draw99(price: float) -> float:
-                """Return the 99 % worst expected drawdown (as +fraction) for a price."""
+                """Return the 99% worst expected drawdown (as +fraction) for a price."""
                 try:
                     result = a * (price ** (-b))
-                    # Clamp to reasonable bounds and handle edge cases
-                    if np.isnan(result) or np.isinf(result) or result <= 0:
-                        # Fallback to price-based estimate
-                        result = 0.6 * (price / 60000) ** (-0.2)
-                    return max(0.05, min(0.85, result))  # Between 5% and 85%
-                except:
-                    # Ultimate fallback
-                    return 0.6 * (price / 60000) ** (-0.2)
+                    # Robust bounds checking
+                    if not np.isfinite(result) or result <= 0:
+                        # Fallback using median historical drawdown with price adjustment
+                        median_drawdown = np.median(filtered_drawdowns)
+                        result = median_drawdown * (price / np.median(filtered_prices)) ** (-0.2)
+                    
+                    return max(0.02, min(0.90, result))  # 2% to 90% bounds
+                except Exception as fallback_error:
+                    # Emergency fallback
+                    return 0.5 * (price / 70000) ** (-0.3)
                 
         except Exception as e:
             print(f"⚠️  Power law curve fitting failed: {e}")
             
-            # Try linear relationship as alternative
+            # FALLBACK STRATEGY 1: Polynomial fit
             try:
-                print("📊 Attempting linear drawdown model...")
+                print("📊 Attempting polynomial drawdown model...")
                 
-                # Simple linear regression: drawdown = m * price + b
-                from scipy import stats
-                slope, intercept, r_value, p_value, std_err = stats.linregress(filtered_prices, filtered_drawdowns)
-                
-                if abs(r_value) > 0.3:  # Reasonable correlation
-                    print(f"📈 Linear model: draw99(p) = {slope:.8f} * p + {intercept:.4f} (R²={r_value**2:.3f})")
+                # Try quadratic relationship in normal space (not log)
+                valid_mask = (bin_stats.d99.values < -0.001) & (bin_stats.p.values > 0)
+                if np.sum(valid_mask) >= 3:
+                    x_poly = bin_stats.p.values[valid_mask]
+                    y_poly = np.abs(bin_stats.d99.values[valid_mask])
                     
-                    def draw99(price: float) -> float:
-                        result = abs(slope * price + intercept)
-                        return max(0.05, min(0.85, result))
+                    # Normalize prices to improve numerical stability
+                    x_norm = x_poly / 50000  # Normalize around $50k
+                    
+                    # Try quadratic: drawdown = c0 + c1*x + c2*x^2
+                    if len(x_norm) >= 6:  # Need enough points for quadratic
+                        coeffs = np.polyfit(x_norm, y_poly, 2)
+                        c2, c1, c0 = coeffs
+                        
+                        # Test model at several points
+                        test_norm = np.array([0.6, 1.0, 1.5, 2.0])  # $30k, $50k, $75k, $100k
+                        test_results = c2 * test_norm**2 + c1 * test_norm + c0
+                        
+                        if all(0.01 < r < 0.95 for r in test_results):
+                            print(f"📈 Polynomial model: draw99(p) = {c2:.2e}*(p/50k)² + {c1:.4f}*(p/50k) + {c0:.4f}")
+                            
+                            def draw99(price: float) -> float:
+                                p_norm = price / 50000
+                                result = c2 * p_norm**2 + c1 * p_norm + c0
+                                return max(0.02, min(0.90, result))
+                        else:
+                            raise ValueError("Polynomial produces invalid results")
+                    else:
+                        raise ValueError("Not enough points for polynomial fit")
                 else:
-                    raise ValueError("Linear fit also poor")
+                    raise ValueError("No valid data for polynomial fit")
                     
-            except:
-                print("📊 Using empirical percentile fallback...")
+            except Exception as poly_error:
+                print(f"   Polynomial fit failed: {poly_error}")
                 
-                # Use actual data percentiles as fallback
-                empirical_drawdown = np.percentile(np.abs(draw_df.draw.values), 99)
-                empirical_drawdown = max(0.05, min(0.85, empirical_drawdown))
+                # FALLBACK STRATEGY 2: Robust empirical model
+                print("📊 Using robust empirical drawdown model...")
                 
-                print(f"📈 Empirical model: constant {empirical_drawdown:.1%} drawdown")
+                # Calculate percentile-based drawdowns from raw data
+                all_drawdowns = np.abs(draw_df.draw.values)
+                all_prices = draw_df.price.values
+                
+                # Remove outliers (beyond 3 standard deviations)
+                drawdown_mean = np.mean(all_drawdowns)
+                drawdown_std = np.std(all_drawdowns)
+                price_mean = np.mean(all_prices)
+                price_std = np.std(all_prices)
+                
+                clean_mask = (
+                    (np.abs(all_drawdowns - drawdown_mean) < 3 * drawdown_std) &
+                    (np.abs(all_prices - price_mean) < 3 * price_std)
+                )
+                
+                clean_drawdowns = all_drawdowns[clean_mask]
+                clean_prices = all_prices[clean_mask]
+                
+                # Use percentiles for different price ranges
+                low_price_thresh = np.percentile(clean_prices, 33)
+                high_price_thresh = np.percentile(clean_prices, 67)
+                
+                low_price_drawdown = np.percentile(clean_drawdowns[clean_prices <= low_price_thresh], 95)
+                mid_price_drawdown = np.percentile(clean_drawdowns[
+                    (clean_prices > low_price_thresh) & (clean_prices <= high_price_thresh)
+                ], 95)
+                high_price_drawdown = np.percentile(clean_drawdowns[clean_prices > high_price_thresh], 95)
+                
+                print(f"📈 Empirical model:")
+                print(f"   Low prices (<${low_price_thresh:.0f}): {low_price_drawdown:.1%}")
+                print(f"   Mid prices (${low_price_thresh:.0f}-${high_price_thresh:.0f}): {mid_price_drawdown:.1%}")  
+                print(f"   High prices (>${high_price_thresh:.0f}): {high_price_drawdown:.1%}")
                 
                 def draw99(price: float) -> float:
-                    # Price-adjusted empirical model
-                    base_drawdown = empirical_drawdown
-                    price_factor = (price / 70000) ** (-0.1)  # Gentle price dependence
-                    result = base_drawdown * price_factor
-                    return max(0.05, min(0.85, result))
+                    """Empirical drawdown model with price tiers."""
+                    if price <= low_price_thresh:
+                        base = low_price_drawdown
+                    elif price <= high_price_thresh:
+                        # Linear interpolation between low and mid
+                        weight = (price - low_price_thresh) / (high_price_thresh - low_price_thresh)
+                        base = low_price_drawdown * (1 - weight) + mid_price_drawdown * weight
+                    else:
+                        # Linear interpolation between mid and high, with gentle extrapolation
+                        if price > high_price_thresh * 2:
+                            # Very high prices get modestly higher drawdowns
+                            base = high_price_drawdown * (1 + 0.1 * np.log(price / high_price_thresh))
+                        else:
+                            weight = (price - high_price_thresh) / high_price_thresh
+                            base = mid_price_drawdown * (1 - weight) + high_price_drawdown * weight
+                    
+                    return max(0.02, min(0.90, base))
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Section 4 · Helper functions (defined before usage)
