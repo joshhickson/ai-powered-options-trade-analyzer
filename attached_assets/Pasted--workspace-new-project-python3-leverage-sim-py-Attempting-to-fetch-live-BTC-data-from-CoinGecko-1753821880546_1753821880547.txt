@@ -1,0 +1,39 @@
+~/workspace/new-project$ python3 leverage_sim.py
+📡 Attempting to fetch live BTC data from CoinGecko API in chunks...
+✅ CoinGecko API key is working!
+📊 Fetching 3650 days in 11 chunks of 350 days each...
+  📥 Chunk 1/11: Requesting 350 days from 0 days ago...
+    ✅ Got 350 price points
+  📥 Chunk 2/11: Requesting 350 days from 350 days ago...
+⚠️  CoinGecko HTTP Error: 401 Client Error: Unauthorized for url: https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=1693341814&to=1723581814
+    Status Code: 401
+    Response Body: {"error":{"status":{"timestamp":"2025-07-29T20:43:36.741+00:00","error_code":10012,"error_message":"Your request exceeds the allowed time range. Public API users are limited to querying historical data within the past 365 days. Upgrade to a paid plan to enjoy full historical data access: https://www.coingecko.com/en/api/pricing. "}}}
+    This suggests an API key issue - please verify your key is correct
+📡 Trying Binance API as backup...
+⚠️  Binance API failed: 451 Client Error:  for url: https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000
+📡 Trying Coinbase API as secondary backup...
+✅ Successfully fetched 350 days of live BTC data from Coinbase
+📊 Price range for analysis: $53950 to $89922
+📊 Found 147 recovery cycles for analysis
+📊 Valid bins for curve fitting: 19
+🔍 CURVE FITTING DIAGNOSTICS:
+   Raw bins: 19
+   Price range: $54156 - $89329
+   Drawdown range: -16.0% - -0.7%
+   Sample drawdowns: [-0.05       -0.06908561 -0.08628167 -0.09319104 -0.11725101]
+   Sample prices: [54156.33  57468.84  58789.805 59402.055 60578.28 ]
+   After filtering: 19 valid points
+   Filtered drawdown range: 0.7% - 16.0%
+   Price ratio (max/min): 1.6x
+   Drawdown ratio (max/min): 21.8x
+   Log-transformed ranges: x=10.90 to 11.40, y=-4.91 to -1.83
+   Fit results: a=0.00000097, b=-0.9996, R²=0.042
+   Parameter checks: {'a_positive': True, 'a_reasonable': False, 'b_finite': True, 'b_reasonable': True, 'r_squared_ok': False}
+⚠️  Power law curve fitting failed: Parameter validation failed: ['a_reasonable', 'r_squared_ok']
+📊 Attempting polynomial drawdown model...
+📈 Polynomial model: draw99(p) = 4.81e-01*(p/50k)² + -1.3362*(p/50k) + 0.9869
+💰 Calculated optimal starting loan: $6,211 (vs. hardcoded $10,000)
+Simulation complete.  Files saved:
+  • cycles_log.csv
+  • btc_price_over_cycles.png
+  • btc_owned_over_cycles.png
