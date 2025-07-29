@@ -120,8 +120,13 @@ def fetch_robust_btc_history() -> pd.Series:
     try:
         import nasdaqdatalink as ndl
         
-        # Try to use environment variable for API key, fallback to default
-        api_key = os.environ.get('NASDAQ_API_KEY', 'YOUR_NASDAQ_API_KEY_HERE')
+        # Get API key from environment (Replit Secrets)
+        api_key = os.environ.get('NASDAQ_API_KEY')
+        if not api_key:
+            print("⚠️  NASDAQ_API_KEY not found in environment variables")
+            raise ImportError("No API key available")
+        
+        print(f"✅ Found Nasdaq API key: {api_key[:8]}...")
         ndl.api_key = api_key
         
         # Code 'BNC/BLX' is for the Bitcoin Liquid Index
