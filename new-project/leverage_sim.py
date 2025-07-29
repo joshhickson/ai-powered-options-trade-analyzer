@@ -118,7 +118,12 @@ def fetch_robust_btc_history() -> pd.Series:
     # --- Tier 1: Nasdaq Data Link (Best Method) ---
     print("📈 Tier 1: Attempting to fetch data from Nasdaq Data Link (Brave New Coin)...")
     try:
-        import nasdaqdatalink as ndl
+        # Check if nasdaq package is available
+        try:
+            import nasdaqdatalink as ndl
+        except ImportError:
+            print("⚠️  nasdaqdatalink package not available in this environment")
+            raise ImportError("Package not installed")
         
         # Get API key from environment (Replit Secrets)
         api_key = os.environ.get('NASDAQ_API_KEY')
@@ -135,7 +140,8 @@ def fetch_robust_btc_history() -> pd.Series:
         print(f"✅ Successfully fetched {len(btc_series)} days of data from Nasdaq.")
         return btc_series
     except Exception as e:
-        print(f"⚠️ Nasdaq API call failed: {e}. Trying Kraken...")
+        print(f"⚠️ Nasdaq method unavailable: {e}")
+        print("📈 Proceeding to Tier 2: Kraken API (US-compliant exchange)...")
 
     # --- Tier 2: Kraken API (Good Backup) ---
     print("\n📈 Tier 2: Attempting to fetch data from Kraken API...")
