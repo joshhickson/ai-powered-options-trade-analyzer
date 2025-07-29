@@ -1,7 +1,7 @@
 run = "Run"
 [nix]
 channel = "stable-24_05"
-packages = ["glibcLocales", "libxcrypt", "pkg-config", "xsimd"]
+packages = ["cairo", "ffmpeg-full", "freetype", "ghostscript", "glibcLocales", "gobject-introspection", "gtk3", "libxcrypt", "pkg-config", "qhull", "tcl", "tk", "xsimd"]
 
 [deployment]
 run = ["sh", "-c", "Run"]
