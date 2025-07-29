@@ -8,5 +8,6 @@
     pkgs.python3Packages.scipy
     pkgs.python3Packages.requests
     pkgs.python3Packages.yfinance
+    pkgs.python3Packages.matplotlib
   ];
 }
