@@ -324,14 +324,19 @@ params = {
     "margin_LTV": 0.90,
 }
 
+# Calculate optimal starting loan using the same logic as subsequent cycles
+initial_loan = cap_next_loan(params["start_price"], params["start_collateral_btc"])
+
 state = {
     "cycle": 0,
     "price": params["start_price"],
     "free_btc": params["start_btc_free"] - params["start_collateral_btc"],
     "collat_btc": params["start_collateral_btc"],  # locked reserve = collat
-    "loan": 10_000.0,
+    "loan": initial_loan,
     "btc_goal": 1.0,
 }
+
+print(f"💰 Calculated optimal starting loan: ${initial_loan:,.0f} (vs. hardcoded $10,000)")
 
 records = []
 
