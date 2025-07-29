@@ -176,8 +176,44 @@ def load_btc_history() -> pd.Series:
     except Exception as e:
         print(f"⚠️  CoinGecko API failed: {e}")
     
-    # Method 2: Coinbase API (Backup)
-    print("📡 Trying Coinbase API as backup...")
+    # Method 2: Binance API (Backup) - 1000 days
+    print("📡 Trying Binance API as backup...")
+    try:
+        import requests
+        
+        url = "https://api.binance.com/api/v3/klines"
+        params = {
+            'symbol': 'BTCUSDT',
+            'interval': '1d',
+            'limit': 1000  # Maximum allowed by Binance, gets ~2.7 years
+        }
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        response = requests.get(url, params=params, headers=headers, timeout=15)
+        response.raise_for_status()
+        
+        data = response.json()
+        df = pd.DataFrame(data, columns=[
+            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+            'close_timestamp', 'quote_volume', 'trades_count',
+            'taker_buy_base_volume', 'taker_buy_quote_volume', 'ignore'
+        ])
+        
+        df['Date'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df = df.set_index('Date')
+        btc_series = df['close'].astype(float).sort_index()
+        
+        print(f"✅ Successfully fetched {len(btc_series)} days of live BTC data from Binance")
+        return btc_series
+        
+    except Exception as e:
+        print(f"⚠️  Binance API failed: {e}")
+    
+    # Method 3: Coinbase API (Secondary Backup)
+    print("📡 Trying Coinbase API as secondary backup...")
     try:
         import requests
         
@@ -206,7 +242,7 @@ def load_btc_history() -> pd.Series:
     except Exception as e:
         print(f"⚠️  Coinbase API failed: {e}")
     
-    # Method 3: Local CSV fallback
+    # Method 4: Local CSV fallback
     try:
         csv_files = ["btc_history_backup.csv", "btc_history.csv"]
         for csv_file in csv_files:
@@ -230,7 +266,7 @@ def load_btc_history() -> pd.Series:
     except Exception as e:
         print(f"⚠️  CSV loading failed: {e}")
     
-    # Method 4: yfinance fallback (if available)
+    # Method 5: yfinance fallback (if available)
     if ONLINE:
         try:
             print("📡 Trying yfinance as final backup...")
@@ -243,7 +279,7 @@ def load_btc_history() -> pd.Series:
         except Exception as e:
             print(f"⚠️  yfinance backup failed: {e}")
     
-    # Method 5: Synthetic data (last resort)
+    # Method 6: Synthetic data (last resort)
     print("📊 All real data sources failed, falling back to synthetic data...")
     return generate_synthetic_btc_data()
 
