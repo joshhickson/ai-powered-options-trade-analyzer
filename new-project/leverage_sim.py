@@ -93,45 +93,10 @@ def load_btc_history() -> pd.Series:
     Tier 4: Synthetic data (last resort)
     """
     
-    # Method 1: Binance API (Primary - July 2025)
-    print("📡 Attempting to fetch live BTC data from Binance API...")
-    try:
-        import requests
-        
-        url = "https://api.binance.com/api/v3/klines"
-        params = {
-            'symbol': 'BTCUSDT',
-            'interval': '1d',
-            'limit': 1000  # Max limit for Binance
-        }
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        response = requests.get(url, params=params, headers=headers, timeout=15)
-        response.raise_for_status()
-        
-        # Process Binance klines data
-        data = response.json()
-        df = pd.DataFrame(data, columns=[
-            'Open_time', 'Open', 'High', 'Low', 'Close', 'Volume',
-            'Close_time', 'Quote_asset_volume', 'Number_of_trades',
-            'Taker_buy_base_asset_volume', 'Taker_buy_quote_asset_volume', 'Ignore'
-        ])
-        
-        # Convert timestamp to datetime and select Close price
-        df['Date'] = pd.to_datetime(df['Open_time'], unit='ms')
-        df = df.set_index('Date')
-        btc_series = df['Close'].astype(float)
-        
-        print(f"✅ Successfully fetched {len(btc_series)} days of live BTC data from Binance")
-        return btc_series
-        
-    except Exception as e:
-        print(f"⚠️  Binance API failed: {e}")
+    # Method 1: Binance API (DISABLED - was failing with 451 errors)
+    # print("📡 Attempting to fetch live BTC data from Binance API...")
     
-    # Method 2: Coinbase API (Backup)
+    # Method 2: Coinbase API (Primary)
     print("📡 Trying Coinbase API as backup...")
     try:
         import requests
@@ -313,7 +278,30 @@ else:
                 return 0.8 * (price / 50000) ** (-0.3)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Section 4 · Simulation parameters & state
+# Section 4 · Helper functions (defined before usage)
+# ──────────────────────────────────────────────────────────────────────────────
+def btc_needed_for_cure(price: float, loan: float) -> float:
+    """
+    Given entry price and loan size, compute how much BTC must be added
+    to keep LTV ≤ 90 % in a 99 % drawdown.
+    """
+    drop_pct = draw99(price)        # e.g. 0.25 → –25 %
+    worst_price = price * (1 - drop_pct)
+    # LTV = loan / (collateral * worst_price)
+    # Want collateral s.t. loan / (collat * worst_price) ≤ 0.90
+    return loan / (0.90 * worst_price)
+
+def cap_next_loan(price: float, reserve_btc: float) -> float:
+    """
+    Find the max loan principal such that reserve ≥ needed cure BTC.
+    Solve inverse of btc_needed_for_cure.
+    """
+    drop_pct = draw99(price)
+    worst_price = price * (1 - drop_pct)
+    return reserve_btc * worst_price * 0.90
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Section 5 · Simulation parameters & state
 # ──────────────────────────────────────────────────────────────────────────────
 params = {
     "start_price": 118_000.0,
@@ -339,29 +327,6 @@ state = {
 print(f"💰 Calculated optimal starting loan: ${initial_loan:,.0f} (vs. hardcoded $10,000)")
 
 records = []
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Section 5 · Helper functions
-# ──────────────────────────────────────────────────────────────────────────────
-def btc_needed_for_cure(price: float, loan: float) -> float:
-    """
-    Given entry price and loan size, compute how much BTC must be added
-    to keep LTV ≤ 90 % in a 99 % drawdown.
-    """
-    drop_pct = draw99(price)        # e.g. 0.25 → –25 %
-    worst_price = price * (1 - drop_pct)
-    # LTV = loan / (collateral * worst_price)
-    # Want collateral s.t. loan / (collat * worst_price) ≤ 0.90
-    return loan / (0.90 * worst_price)
-
-def cap_next_loan(price: float, reserve_btc: float) -> float:
-    """
-    Find the max loan principal such that reserve ≥ needed cure BTC.
-    Solve inverse of btc_needed_for_cure.
-    """
-    drop_pct = draw99(price)
-    worst_price = price * (1 - drop_pct)
-    return reserve_btc * worst_price * 0.90
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Section 6 · Event-driven cycle loop
