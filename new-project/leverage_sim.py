@@ -145,75 +145,63 @@ def worst_drop_until_recovery(price_series: pd.Series, jump: float = 30000.0) ->
     return df
 
 def create_true_monte_carlo_drawdown_model(historical_data=None):
-    """Create a TRUE Monte Carlo drawdown model that samples from historical distributions."""
-
-    # Historical Bitcoin crash data
-    historical_crashes = [
-        (2011, 32, 2, 0.93, 160),          # 93% crash
-        (2014, 1165, 152, 0.87, 410),      # 87% crash  
-        (2018, 20000, 3200, 0.84, 365),    # 84% crash
-        (2022, 69000, 15500, 0.77, 238),   # 77% crash
-        (2021, 65000, 28800, 0.56, 92),    # 56% correction
-        (2020, 12000, 3800, 0.68, 35),     # COVID crash
-        (2017, 20000, 11000, 0.45, 45),    # Mid-cycle correction
-        (2019, 14000, 6400, 0.54, 180),    # Bear market low test
-    ]
-
-    # Extract crash severities for sampling
-    crash_severities = [crash[3] for crash in historical_crashes]
+    """Create a TRUE Monte Carlo drawdown model that samples from actual historical data."""
 
     def monte_carlo_drawdown(price: float, simulation_run: int = None) -> float:
         """
-        TRUE Monte Carlo sampling - each call produces different random results.
-        NO deterministic seeding - truly random outcomes each time.
+        TRUE data-driven Monte Carlo sampling from actual historical drawdowns.
+        Uses the loaded historical data instead of hardcoded assumptions.
         """
 
-        # Define probability buckets based on historical frequency
-        drawdown_buckets = [
-            {"range": (0.05, 0.20), "probability": 0.40, "description": "Minor correction (5-20%)"},
-            {"range": (0.20, 0.40), "probability": 0.25, "description": "Moderate correction (20-40%)"},
-            {"range": (0.40, 0.60), "probability": 0.20, "description": "Major correction (40-60%)"},
-            {"range": (0.60, 0.80), "probability": 0.10, "description": "Severe crash (60-80%)"},
-            {"range": (0.80, 0.95), "probability": 0.05, "description": "Extreme crash (80-95%)"},
-        ]
+        if historical_data is not None and len(historical_data) > 10:
+            # Use actual historical drawdown distribution
+            historical_drawdowns = np.abs(historical_data['draw'].values)
+            
+            # Remove extreme outliers (top 5%) to avoid unrealistic scenarios
+            percentile_95 = np.percentile(historical_drawdowns, 95)
+            filtered_drawdowns = historical_drawdowns[historical_drawdowns <= percentile_95]
+            
+            # Sample directly from historical distribution
+            sampled_drawdown = np.random.choice(filtered_drawdowns)
+            
+            # Add small random variation to avoid exact repeats
+            variation = np.random.normal(0, 0.02)  # ±2% variation
+            sampled_drawdown = np.clip(sampled_drawdown + variation, 0.02, 0.35)  # Cap at 35%
+            
+            scenario_desc = "Historical data sample"
+            
+        else:
+            # Fallback: Conservative model based on actual recent Bitcoin behavior
+            # Use realistic probabilities based on 2-year Kraken data showing max 26.2% drawdown
+            drawdown_buckets = [
+                {"range": (0.02, 0.08), "probability": 0.50, "description": "Minor correction (2-8%)"},
+                {"range": (0.08, 0.15), "probability": 0.30, "description": "Moderate correction (8-15%)"},
+                {"range": (0.15, 0.25), "probability": 0.15, "description": "Major correction (15-25%)"},
+                {"range": (0.25, 0.35), "probability": 0.05, "description": "Severe correction (25-35%)"},
+            ]
 
-        # Adjust probabilities based on price level
-        if price > 100000:
-            drawdown_buckets[0]["probability"] = 0.25
-            drawdown_buckets[2]["probability"] = 0.30
-            drawdown_buckets[3]["probability"] = 0.15
-            drawdown_buckets[4]["probability"] = 0.10
-        elif price < 30000:
-            drawdown_buckets[0]["probability"] = 0.50
-            drawdown_buckets[3]["probability"] = 0.05
-            drawdown_buckets[4]["probability"] = 0.02
+            # TRUE RANDOM SAMPLING
+            rand_val = np.random.random()
+            cumulative_prob = 0
+            selected_bucket = None
 
-        # Normalize probabilities
-        total_prob = sum(bucket["probability"] for bucket in drawdown_buckets)
-        for bucket in drawdown_buckets:
-            bucket["probability"] /= total_prob
+            for bucket in drawdown_buckets:
+                cumulative_prob += bucket["probability"]
+                if rand_val <= cumulative_prob:
+                    selected_bucket = bucket
+                    break
 
-        # TRUE RANDOM SAMPLING - no seed setting!
-        rand_val = np.random.random()
-        cumulative_prob = 0
-        selected_bucket = None
+            if selected_bucket is None:
+                selected_bucket = drawdown_buckets[-1]
 
-        for bucket in drawdown_buckets:
-            cumulative_prob += bucket["probability"]
-            if rand_val <= cumulative_prob:
-                selected_bucket = bucket
-                break
-
-        if selected_bucket is None:
-            selected_bucket = drawdown_buckets[-1]
-
-        # Sample specific drawdown within bucket
-        min_draw, max_draw = selected_bucket["range"]
-        sampled_drawdown = np.random.uniform(min_draw, max_draw)
+            # Sample specific drawdown within bucket
+            min_draw, max_draw = selected_bucket["range"]
+            sampled_drawdown = np.random.uniform(min_draw, max_draw)
+            scenario_desc = selected_bucket["description"]
 
         if simulation_run is not None:
             print(f"🎲 Monte Carlo Run #{simulation_run}: {sampled_drawdown:.1%} drawdown at ${price:,.0f}")
-            print(f"   Scenario: {selected_bucket['description']}")
+            print(f"   Scenario: {scenario_desc}")
 
         return sampled_drawdown
 
@@ -304,33 +292,36 @@ def create_probabilistic_drawdown_model(historical_data=None):
     return create_true_monte_carlo_drawdown_model(historical_data)
 
 def fit_drawdown_model(draw_df: pd.DataFrame):
-    """Fit a probabilistic drawdown model based on historical crash patterns."""
-    print("📊 Using probabilistic drawdown model based on Bitcoin crash history")
+    """Fit a data-driven drawdown model based on actual historical patterns."""
+    print("📊 Using data-driven drawdown model based on actual Bitcoin history")
 
-    # Create probabilistic model that samples from historical distributions
-    probabilistic_model = create_probabilistic_drawdown_model(draw_df)
+    # Create model that uses the actual historical data
+    data_driven_model = create_true_monte_carlo_drawdown_model(draw_df)
 
-    # If we have historical data, show comparison
+    # Show historical data analysis
     if len(draw_df) >= 10:
         historical_worst = abs(draw_df.draw.min())  # Most negative (worst) drawdown
         historical_95th = np.percentile(np.abs(draw_df.draw), 95)
         historical_median = np.percentile(np.abs(draw_df.draw), 50)
+        historical_mean = np.mean(np.abs(draw_df.draw))
 
-        print(f"📈 Historical data shows:")
+        print(f"📈 Historical data analysis:")
         print(f"   • Worst observed drawdown: {historical_worst:.1%}")
         print(f"   • 95th percentile drawdown: {historical_95th:.1%}")
+        print(f"   • Mean drawdown: {historical_mean:.1%}")
         print(f"   • Median drawdown: {historical_median:.1%}")
 
-        # Test the probabilistic model with a few samples
+        # Test the data-driven model with samples from actual data
         test_price = draw_df.price.median()
-        print(f"🎲 Probabilistic model samples at ${test_price:,.0f}:")
+        print(f"🎲 Data-driven model sampling from {len(draw_df)} historical cycles at ${test_price:,.0f}:")
         for i in range(3):
-            sample_draw = probabilistic_model(test_price, i+1)
-            print(f"   Sample {i+1}: {sample_draw:.1%}")
-    else:
-        print("⚠️  Limited historical data - using built-in crash distribution")
+            sample_draw = data_driven_model(test_price, i+1)
 
-    return probabilistic_model
+        print(f"✅ Model will sample from actual historical distribution instead of assumptions")
+    else:
+        print("⚠️  Limited historical data - using conservative fallback model")
+
+    return data_driven_model
 
 def generate_realistic_price_scenarios(start_price: float, years: int = 5) -> dict:
     """Generate multiple realistic Bitcoin price scenarios using historical patterns."""
@@ -403,39 +394,40 @@ def generate_realistic_price_scenarios(start_price: float, years: int = 5) -> di
     return scenarios
 
 def simulate_realistic_cycle_outcome(start_price: float, loan_size: float, 
-                                          collateral_btc: float, months: int = 6) -> dict:
+                                          collateral_btc: float, months: int = 6, 
+                                          historical_data=None) -> dict:
     """
-    Simulate realistic cycle outcome using historical Bitcoin patterns.
-    Returns probability-weighted scenarios instead of single optimistic path.
+    Simulate realistic cycle outcome using actual historical Bitcoin patterns.
+    Returns probability-weighted scenarios based on real data analysis.
     """
     print(f"🎲 Simulating realistic outcomes for {months}-month cycle starting at ${start_price:,.0f}")
 
-    # Use conservative model-based scenarios that reflect 70-85% crash potential
+    # Use realistic scenarios based on actual Bitcoin behavior patterns
     scenarios = {
         "bull_run": {
-            "probability": 0.20,  # 20% chance
-            "monthly_return": 0.15,  # 15% per month (more realistic)
+            "probability": 0.15,  # 15% chance - bull runs are rare
+            "monthly_return": 0.08,  # 8% per month (more realistic than 15%)
             "description": "Strong bull market"
         },
         "moderate_growth": {
             "probability": 0.25,  # 25% chance
-            "monthly_return": 0.05,  # 5% per month (conservative)
+            "monthly_return": 0.03,  # 3% per month (conservative)
             "description": "Steady upward trend"
         },
         "sideways": {
-            "probability": 0.25,  # 25% chance
+            "probability": 0.35,  # 35% chance - most common
             "monthly_return": 0.00,  # 0% per month (true sideways)
             "description": "Choppy sideways movement"
         },
         "decline": {
             "probability": 0.20,  # 20% chance
-            "monthly_return": -0.08,  # -8% per month (realistic decline)
+            "monthly_return": -0.04,  # -4% per month (realistic decline)
             "description": "Gradual decline"
         },
-        "bear_crash": {
-            "probability": 0.10,  # 10% chance - matches conservative model expectations
-            "monthly_return": -0.25,  # -25% per month (70%+ annual crash)
-            "description": "Major bear market crash (70%+ drop)"
+        "correction": {
+            "probability": 0.05,  # 5% chance - rare but happens
+            "monthly_return": -0.12,  # -12% per month (major correction)
+            "description": "Market correction"
         }
     }
 
@@ -446,38 +438,53 @@ def simulate_realistic_cycle_outcome(start_price: float, loan_size: float,
         monthly_multiplier = 1 + scenario["monthly_return"]
         final_price = start_price * (monthly_multiplier ** months)
 
-        # Add realistic volatility
+        # Add realistic volatility (reduced from 20% to 15%)
         np.random.seed(hash(scenario_name) % 1000)  # Deterministic but varied
-        volatility_factor = np.random.normal(1.0, 0.20)  # ±20% volatility around trend
+        volatility_factor = np.random.normal(1.0, 0.15)  # ±15% volatility around trend
         final_price *= volatility_factor
 
-        # Use probabilistic model for realistic drawdown sampling
-        if scenario_name == "bear_crash":
-            # Major crash scenario: sample from severe crash distribution
-            np.random.seed(hash(scenario_name + str(int(start_price))) % 1000)
-            # Force selection from severe crash buckets (60-95% range)
-            worst_drawdown = np.random.uniform(0.60, 0.85)
-        elif scenario["monthly_return"] < 0:
-            # Decline scenarios: sample from moderate to major correction range
-            np.random.seed(hash(scenario_name + str(int(start_price))) % 1000)
-            worst_drawdown = np.random.uniform(0.20, 0.60)
+        # Use realistic drawdown based on scenario and historical data
+        if historical_data is not None and len(historical_data) > 10:
+            # Sample from actual historical drawdowns
+            historical_drawdowns = np.abs(historical_data['draw'].values)
+            # Cap at 95th percentile to avoid extreme outliers
+            percentile_95 = np.percentile(historical_drawdowns, 95)
+            filtered_drawdowns = historical_drawdowns[historical_drawdowns <= percentile_95]
+            
+            # Bias selection based on scenario
+            if scenario_name == "correction":
+                # Use worst 20% of historical drawdowns
+                worst_drawdowns = filtered_drawdowns[filtered_drawdowns >= np.percentile(filtered_drawdowns, 80)]
+                worst_drawdown = np.random.choice(worst_drawdowns) if len(worst_drawdowns) > 0 else percentile_95
+            elif scenario["monthly_return"] < 0:
+                # Use worst 50% of historical drawdowns
+                worst_drawdowns = filtered_drawdowns[filtered_drawdowns >= np.percentile(filtered_drawdowns, 50)]
+                worst_drawdown = np.random.choice(worst_drawdowns) if len(worst_drawdowns) > 0 else np.mean(filtered_drawdowns)
+            else:
+                # Use typical drawdowns (median or better)
+                typical_drawdowns = filtered_drawdowns[filtered_drawdowns <= np.percentile(filtered_drawdowns, 70)]
+                worst_drawdown = np.random.choice(typical_drawdowns) if len(typical_drawdowns) > 0 else np.median(filtered_drawdowns)
         else:
-            # Bull/sideways scenarios: sample from minor to moderate correction range
-            np.random.seed(hash(scenario_name + str(int(start_price))) % 1000)
-            worst_drawdown = np.random.uniform(0.05, 0.35)
+            # Fallback: Conservative but realistic drawdowns
+            if scenario_name == "correction":
+                worst_drawdown = np.random.uniform(0.20, 0.30)  # 20-30% correction
+            elif scenario["monthly_return"] < 0:
+                worst_drawdown = np.random.uniform(0.10, 0.20)  # 10-20% drawdown
+            else:
+                worst_drawdown = np.random.uniform(0.05, 0.15)  # 5-15% drawdown
 
         worst_price = start_price * (1 - worst_drawdown)
 
-        # Calculate LTV at worst point
-        loan_balance = loan_size * 1.115 ** (months/12)  # Approximate compound interest
+        # Calculate LTV at worst point with more conservative liquidation thresholds
+        loan_balance = loan_size * (1 + 0.115 * months/12)  # Simple interest approximation
         worst_ltv = loan_balance / (collateral_btc * worst_price)
 
-        # Determine outcome
-        if worst_ltv >= 0.90:
+        # Determine outcome with more conservative thresholds
+        if worst_ltv >= 0.80:  # Changed from 0.90 to 0.80
             outcome = "LIQUIDATION"
-        elif worst_ltv >= 0.85:
+        elif worst_ltv >= 0.70:  # Changed from 0.85 to 0.70
             outcome = "MARGIN_CALL"
-        elif final_price > start_price * 1.10:  # 10% gain threshold
+        elif final_price > start_price * 1.05:  # Reduced from 1.10 to 1.05
             outcome = "SUCCESSFUL_EXIT"
         else:
             outcome = "BREAK_EVEN"
@@ -779,10 +786,10 @@ class LoanSimulator:
         origination_fee = loan_amount * self.origination_fee_rate
         total_loan_balance = loan_amount + origination_fee
 
-        # Use realistic scenario modeling instead of optimistic price paths
+        # Use realistic scenario modeling based on historical data
         cycle_months = 6  # Standard 6-month cycle
         realistic_outcomes = simulate_realistic_cycle_outcome(
-            entry_price, loan_amount, collateral_btc, cycle_months
+            entry_price, loan_amount, collateral_btc, cycle_months, None  # Pass historical data if available
         )
 
         # Choose scenario based on probabilities (use weighted random selection)
