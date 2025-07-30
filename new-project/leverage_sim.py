@@ -1,33 +1,24 @@
+` tags, maintaining its original formatting and structure.
+
+<replit_final_file>
 #!/usr/bin/env python3
 """
 leverage_sim.py
-Simulate a repeated BTC-collateral loan strategy with dynamic sizing.
+Accurate Bitcoin-collateral loan strategy simulation with realistic contract terms.
 
-User-defined rules (2025-07-29):
-    • Start with 0.24 BTC, price = $118 000.
-    • Post 0.12 BTC as collateral; 0.12 BTC stays in reserve.
-    • Borrow $10 000 at 11.5 % APR (lump-sum interest at exit).
-    • A loan cycle ends when price = entry_price + $30 000.
-    • One margin call *always* happens per cycle at the worst drawdown
-      (we size it using the 99 th-percentile historical drop).
-    • If LTV would hit 90 %, move reserve BTC to cure (locked until exit).
-    • Reserve size must equal collateral and remains locked until exit.
-    • Each new loan’s principal is capped so that the reserve covers
-      the fitted 99 % drawdown at that entry price.
-    • Stop when free BTC ≥ 1.0.
-
-Outputs:
-    cycles_log.csv, btc_price_over_cycles.png, btc_owned_over_cycles.png
+Based on Figure Lending contract analysis:
+    • Minimum loan: $10,000 at 11.5% APR
+    • Monthly interest-only payments: $95.83/month
+    • LTV triggers: 85% margin call, 90% liquidation
+    • 48-hour cure period for margin calls
+    • Interest can be deferred (compounds daily)
+    • 2% processing fee on liquidations
 """
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Imports & helpers
-# ──────────────────────────────────────────────────────────────────────────────
 import datetime as dt
 import math
 import os
 import sys
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -38,36 +29,27 @@ try:
     ONLINE = True
 except ImportError:
     ONLINE = False
-    print("⚠️  yfinance not found.  Expecting btc_history.csv in this folder.")
+    print("⚠️  yfinance not found. Using synthetic data.")
 
-# Import requests for CoinGecko API
-try:
-    import requests
-except ImportError:
-    print("⚠️  requests not found. Install with: pip install requests")
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Section 1 · Pull / load BTC price history
-# ──────────────────────────────────────────────────────────────────────────────
 def generate_synthetic_btc_data():
     """Generate synthetic BTC price data for simulation when real data fails."""
     print("🔄 Generating synthetic BTC price data for simulation...")
-    
+
     # Create 5 years of daily data
     dates = pd.date_range(start='2019-01-01', end='2024-01-01', freq='D')
-    
+
     # Generate realistic BTC price progression with volatility
     np.random.seed(42)  # For reproducible results
     n_days = len(dates)
-    
+
     # Start at $4000, trend upward to ~$100k with realistic volatility
     trend = np.linspace(4000, 100000, n_days)
     volatility = np.random.normal(0, 0.04, n_days)  # 4% daily volatility
-    
+
     # Apply cumulative volatility
     price_changes = np.exp(np.cumsum(volatility))
     prices = trend * price_changes
-    
+
     # Add some realistic crashes and recoveries
     crash_points = [int(n_days * 0.3), int(n_days * 0.6), int(n_days * 0.8)]
     for crash_idx in crash_points:
@@ -75,1023 +57,482 @@ def generate_synthetic_btc_data():
             crash_magnitude = np.random.uniform(0.3, 0.7)  # 30-70% crash
             recovery_days = 200
             end_idx = min(crash_idx + recovery_days, len(prices))
-            
+
             # Apply crash and gradual recovery
             for i in range(crash_idx, end_idx):
                 recovery_factor = (i - crash_idx) / recovery_days
                 prices[i] *= (crash_magnitude + (1 - crash_magnitude) * recovery_factor)
-    
+
     return pd.Series(prices, index=dates, name='Close')
 
-def test_coingecko_api(api_key: str) -> bool:
-    """Test CoinGecko API connection with a simple ping endpoint."""
-    try:
-        import requests
-        
-        # Test with ping endpoint first
-        ping_url = "https://api.coingecko.com/api/v3/ping"
-        headers = {
-            'accept': 'application/json',
-            'x-cg-demo-api-key': api_key,
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        
-        response = requests.get(ping_url, headers=headers, timeout=10)
-        if response.status_code == 200:
-            print("✅ CoinGecko API key is working!")
-            return True
-        else:
-            print(f"⚠️  CoinGecko ping failed: {response.status_code}")
-            print(f"    Response: {response.text}")
-            return False
-    except Exception as e:
-        print(f"⚠️  CoinGecko API test failed: {e}")
-        return False
-
-def fetch_robust_btc_history() -> pd.Series:
-    """
-    Fetches long-term BTC history using a tiered approach.
-    Tier 1: Nasdaq Data Link (Brave New Coin dataset) - Best for 10+ years
-    Tier 2: Kraken API - US-compliant exchange, requires looping
-    """
-    
-    # --- Tier 1: Nasdaq Data Link (Best Method) ---
-    print("📈 Tier 1: Attempting to fetch data from Nasdaq Data Link (Brave New Coin)...")
-    try:
-        # Check if nasdaq package is available
-        try:
-            import nasdaqdatalink as ndl
-        except ImportError:
-            print("⚠️  nasdaqdatalink package not available in this environment")
-            raise ImportError("Package not installed")
-        
-        # Get API key from environment (Replit Secrets)
-        api_key = os.environ.get('NASDAQ_API_KEY')
-        if not api_key:
-            print("⚠️  NASDAQ_API_KEY not found in environment variables")
-            raise ImportError("No API key available")
-        
-        print(f"✅ Found Nasdaq API key: {api_key[:8]}...")
-        ndl.api_key = api_key
-        
-        # Code 'BNC/BLX' is for the Bitcoin Liquid Index
-        df = ndl.get("BNC/BLX", start_date="2010-01-01")
-        btc_series = df['Value'].astype(float)
-        print(f"✅ Successfully fetched {len(btc_series)} days of data from Nasdaq.")
-        return btc_series
-    except Exception as e:
-        print(f"⚠️ Nasdaq method unavailable: {e}")
-        print("📈 Proceeding to Tier 2: Kraken API (US-compliant exchange)...")
-
-    # --- Tier 2: Kraken API (Good Backup) ---
-    print("\n📈 Tier 2: Attempting to fetch data from Kraken API...")
-    try:
-        import time
-        
-        url = "https://api.kraken.com/0/public/OHLC"
-        params = {'pair': 'XBTUSD', 'interval': 1440}  # 1440 minutes = 1 day
-        all_data = []
-        
-        # Kraken's API paginates with a 'since' parameter
-        # We'll make a few calls to get over 1000 days of data
-        for i in range(5):  # Loop 5 times to get ~10 years of data
-            response = requests.get(url, params=params, timeout=15)
-            response.raise_for_status()
-            data = response.json()
-            
-            if 'result' not in data:
-                print(f"⚠️ Unexpected Kraken response format: {data}")
-                break
-            
-            pair_name = list(data['result'].keys())[0] if data['result'] else None
-            if not pair_name or pair_name == 'last':
-                break
-                
-            ohlc_data = data['result'][pair_name]
-            all_data.extend(ohlc_data)
-            
-            # The 'last' timestamp tells us where the next page should start
-            if 'last' in data['result']:
-                last_ts = data['result']['last']
-                params['since'] = last_ts
-            else:
-                break
-            
-            print(f"  📥 Fetched {len(ohlc_data)} records from Kraken (batch {i+1}/5)...")
-            time.sleep(1)  # Be polite to the API
-        
-        if all_data:
-            df = pd.DataFrame(all_data, columns=['time', 'open', 'high', 'low', 'close', 'vwap', 'volume', 'count'])
-            df['Date'] = pd.to_datetime(df['time'], unit='s')
-            df = df.set_index('Date')
-            df = df[~df.index.duplicated(keep='first')].sort_index()
-            btc_series = df['close'].astype(float)
-            
-            print(f"✅ Successfully fetched {len(btc_series)} days of data from Kraken.")
-            return btc_series
-        else:
-            print("⚠️ No data received from Kraken")
-            
-    except Exception as e:
-        print(f"⚠️ Kraken API failed: {e}")
-    
-    return None
-
 def load_btc_history() -> pd.Series:
-    """
-    Fetches daily Bitcoin closing prices using the most reliable 2025 methods.
-    
-    Tier 1: Nasdaq Data Link (Brave New Coin) - Primary (US-compliant, 10+ years)
-    Tier 2: Kraken API - Secondary (US-compliant exchange)
-    Tier 3: Local CSV fallback  
-    Tier 4: Synthetic data (last resort)
-    """
-    
-    # Method 1: Robust multi-tier API approach (Primary)
-    print("📡 Attempting to fetch 10+ years of BTC data using robust methods...")
-    try:
-        btc_series = fetch_robust_btc_history()
-        if btc_series is not None and len(btc_series) > 100:
-            return btc_series
-        else:
-            print("⚠️ All API methods returned insufficient data")
-            
-    except Exception as e:
-        print(f"⚠️ Robust API methods failed: {e}")
-    
-    # DISABLED: Method 2: CoinGecko API with Demo key (Primary) - Chunked requests for 10 years
-    # print("📡 Attempting to fetch live BTC data from CoinGecko API in chunks...")
-    # try:
-    #     import requests
-    #     import time
-    #     from datetime import datetime, timedelta
-    #     
-    #     # Your CoinGecko Demo API key
-    #     API_KEY = "CG-WCcgxgiuhnov31LZB6FzgaB4"
-    #     
-    #     # Test API key first
-    #     if not test_coingecko_api(API_KEY):
-    #         raise Exception("API key test failed")
-    #     
-    #     headers = {
-    #         'accept': 'application/json',
-    #         'x-cg-demo-api-key': API_KEY,
-    #         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    #     }
-    #     
-    #     all_price_data = []
-    #     
-    #     # Request data in 350-day chunks (slightly under 365 to be safe)
-    #     # Go back 10 years = ~3650 days, so we need about 10-11 chunks
-    #     chunk_days = 350
-    #     total_days = 3650  # 10 years
-    #     num_chunks = (total_days // chunk_days) + 1
-    #     
-    #     print(f"📊 Fetching {total_days} days in {num_chunks} chunks of {chunk_days} days each...")
-    #     
-    #     for chunk in range(num_chunks):
-    #         days_from_now = chunk * chunk_days
-    #         
-    #         # For the last chunk, calculate remaining days
-    #         if chunk == num_chunks - 1:
-    #             remaining_days = total_days - (chunk * chunk_days)
-    #             if remaining_days <= 0:
-    #                 break
-    #             days_to_request = min(remaining_days, chunk_days)
-    #         else:
-    #             days_to_request = chunk_days
-    #         
-    #         print(f"  📥 Chunk {chunk + 1}/{num_chunks}: Requesting {days_to_request} days from {days_from_now} days ago...")
-    #         
-    #         # Calculate the date range for this chunk
-    #         end_date = datetime.now() - timedelta(days=days_from_now)
-    #         start_date = end_date - timedelta(days=days_to_request)
-    #         
-    #         url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range"
-    #         params = {
-    #             'vs_currency': 'usd',
-    #             'from': int(start_date.timestamp()),
-    #             'to': int(end_date.timestamp())
-    #         }
-    #         
-    #         # Add delay between requests to respect rate limits
-    #         if chunk > 0:
-    #             time.sleep(2)  # 2-second delay between chunks
-    #         
-    #         response = requests.get(url, params=params, headers=headers, timeout=20)
-    #         response.raise_for_status()
-    #         
-    #         data = response.json()
-    #         if 'prices' in data and len(data['prices']) > 0:
-    #             chunk_prices = data['prices']
-    #             all_price_data.extend(chunk_prices)
-    #             print(f"    ✅ Got {len(chunk_prices)} price points")
-    #         else:
-    #             print(f"    ⚠️  Empty data for chunk {chunk + 1}")
-    #     
-    #     if all_price_data:
-    #         # Process all combined price data
-    #         df = pd.DataFrame(all_price_data, columns=['timestamp', 'price'])
-    #         
-    #         # Convert timestamp to datetime and set as index
-    #         df['Date'] = pd.to_datetime(df['timestamp'], unit='ms')
-    #         df = df.set_index('Date')
-    #         
-    #         # Remove duplicates and sort
-    #         df = df[~df.index.duplicated(keep='first')].sort_index()
-    #         
-    #         # Return price series
-    #         btc_series = df['price'].astype(float)
-    #         
-    #         print(f"✅ Successfully fetched {len(btc_series)} days of live BTC data from CoinGecko (chunked)")
-    #         print(f"📅 Date range: {btc_series.index.min().strftime('%Y-%m-%d')} to {btc_series.index.max().strftime('%Y-%m-%d')}")
-    #         return btc_series
-    #     else:
-    #         print("⚠️  CoinGecko returned no price data across all chunks")
-    #         
-    # except requests.exceptions.HTTPError as http_err:
-    #     print(f"⚠️  CoinGecko HTTP Error: {http_err}")
-    #     if hasattr(http_err, 'response'):
-    #         print(f"    Status Code: {http_err.response.status_code}")
-    #         print(f"    Response Body: {http_err.response.text}")
-    #         if http_err.response.status_code == 401:
-    #             print("    This suggests an API key issue - please verify your key is correct")
-    #         elif http_err.response.status_code == 429:
-    #             print("    Rate limit exceeded - try increasing delays between chunks")
-    # except Exception as e:
-    #     print(f"⚠️  CoinGecko chunked API failed: {e}")
-    
-    # DISABLED: Method 3: Coinbase API (Secondary Backup)
-    # print("📡 Trying Coinbase API as secondary backup...")
-    # try:
-    #     import requests
-    #     
-    #     url = "https://api.exchange.coinbase.com/products/BTC-USD/candles"
-    #     params = {
-    #         'granularity': 86400  # 86400 seconds = 1 day
-    #     }
-    #     
-    #     headers = {
-    #         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    #     }
-    #     
-    #     response = requests.get(url, params=params, headers=headers, timeout=15)
-    #     response.raise_for_status()
-    #     
-    #     data = response.json()
-    #     df = pd.DataFrame(data, columns=['time', 'low', 'high', 'open', 'close', 'volume'])
-    #     
-    #     df['Date'] = pd.to_datetime(df['time'], unit='s')
-    #     df = df.set_index('Date')
-    #     btc_series = df['close'].astype(float).sort_index()
-    #     
-    #     print(f"✅ Successfully fetched {len(btc_series)} days of live BTC data from Coinbase")
-    #     return btc_series
-    #     
-    # except Exception as e:
-    #     print(f"⚠️  Coinbase API failed: {e}")
-    
-    # Method 4: Local CSV fallback
+    """Load Bitcoin price history with fallbacks."""
+
+    # Method 1: yfinance (if available)
+    if ONLINE:
+        try:
+            print("📡 Trying yfinance...")
+            btc = yf.download("BTC-USD", start="2015-01-01", progress=False)
+            if not btc.empty and 'Adj Close' in btc.columns:
+                prices = btc["Adj Close"].dropna()
+                if len(prices) >= 100:
+                    print(f"✅ yfinance successful: {len(prices)} days")
+                    return prices
+        except Exception as e:
+            print(f"⚠️  yfinance failed: {e}")
+
+    # Method 2: Local CSV fallback
     try:
         csv_files = ["btc_history_backup.csv", "btc_history.csv"]
         for csv_file in csv_files:
             if os.path.exists(csv_file):
                 print(f"📂 Loading BTC data from {csv_file}...")
                 df = pd.read_csv(csv_file, index_col=0, parse_dates=True)
-                
+
                 # Try different column names
                 price_col = None
                 for col in ['Close', 'close', 'price', 'Price']:
                     if col in df.columns:
                         price_col = col
                         break
-                
+
                 if price_col:
                     btc_series = df[price_col].astype(float).dropna()
                     btc_series.index = pd.to_datetime(btc_series.index)
                     print(f"✅ Successfully loaded {len(btc_series)} days from CSV")
                     return btc_series
-                
+
     except Exception as e:
         print(f"⚠️  CSV loading failed: {e}")
-    
-    # Method 5: yfinance fallback (if available)
-    if ONLINE:
-        try:
-            print("📡 Trying yfinance as final backup...")
-            btc = yf.download("BTC-USD", start="2010-07-17", progress=False)
-            if not btc.empty and 'Adj Close' in btc.columns:
-                prices = btc["Adj Close"].dropna()
-                if len(prices) >= 100:
-                    print(f"✅ yfinance backup successful: {len(prices)} days")
-                    return prices
-        except Exception as e:
-            print(f"⚠️  yfinance backup failed: {e}")
-    
-    # Method 6: Synthetic data (last resort)
-    print("📊 All real data sources failed, falling back to synthetic data...")
+
+    # Method 3: Synthetic data (last resort)
+    print("📊 All real data sources failed, using synthetic data...")
     return generate_synthetic_btc_data()
 
-prices = load_btc_history()
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Section 2 · For every day, compute “worst drawdown before +$30 K recovery”
-# ──────────────────────────────────────────────────────────────────────────────
-def worst_drop_until_recovery(price_series: pd.Series,
-                              jump: float = 30000.0) -> pd.Series:
+def worst_drop_until_recovery(price_series: pd.Series, jump: float = 30000.0) -> pd.DataFrame:
     """
-    For each start date i, find j > i s.t. price_j ≥ price_i + jump.
-    Record min(price_i…j) ÷ price_i − 1  (negative % drop).
-    If recovery never occurs, drop the sample.
+    For each start date, find worst drawdown before price recovers by jump amount.
     """
     res = []
     dates = price_series.index
     p = price_series.values
     n = len(p)
+
     for i in range(n):
         target = p[i] + jump
-        # Scan forward until recovery
         j = i
         min_p = p[i]
+
         while j < n and p[j] < target:
             min_p = min(min_p, p[j])
             j += 1
+
         if j == n:
             continue  # never recovered
+
         draw = (min_p / p[i]) - 1.0  # negative value
         res.append((dates[i], p[i], draw))
+
     df = pd.DataFrame(res, columns=["date", "price", "draw"])
     return df
 
-draw_df = worst_drop_until_recovery(prices)
+def fit_drawdown_model(draw_df: pd.DataFrame):
+    """Fit a drawdown model from historical data."""
+    if len(draw_df) < 10:
+        print("⚠️  Insufficient data for drawdown model, using default")
+        return lambda price: max(0.15, min(0.80, 0.5 * (price / 50000) ** (-0.2)))
 
-# Validate we have sufficient data
-if len(draw_df) < 50:
-    print(f"⚠️  Warning: Only {len(draw_df)} recovery cycles found. Results may be less reliable.")
+    # Simple percentile-based model by price ranges
+    min_price = draw_df.price.min()
+    max_price = draw_df.price.max()
 
-# Analyze historical price movements for realistic timing
-movement_stats = analyze_price_movements(prices, params["exit_jump"])
+    # Create price bins
+    n_bins = min(20, max(5, len(draw_df) // 10))
+    bins = np.linspace(min_price, max_price, n_bins)
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Section 3 · Fit 99 th-percentile drawdown curve  draw99(price) = a·p^(-b)
-# ──────────────────────────────────────────────────────────────────────────────
-# Get 99th-percentile (largest magnitude) drop for price bins
-min_price = draw_df.price.min()
-max_price = draw_df.price.max()
-
-print(f"📊 Price range for analysis: ${min_price:.0f} to ${max_price:.0f}")
-print(f"📊 Found {len(draw_df)} recovery cycles for analysis")
-
-# Create bins ensuring they are monotonically increasing
-if max_price <= min_price:
-    print("⚠️  Invalid price range, using default drawdown model...")
-    # Use a simple fallback model
-    def draw99(price: float) -> float:
-        return 0.8 * (price / 50000) ** (-0.3)  # Reasonable power law
-else:
-    # Use fewer bins if we have limited data
-    n_bins = min(40, max(10, len(draw_df) // 5))
-    bins = np.logspace(np.log10(min_price), np.log10(max_price), n_bins)
-    
-    # Ensure bins are strictly increasing
-    bins = np.sort(bins)
-    bins = bins[bins > 0]  # Remove any zero or negative values
-    
-    if len(np.unique(bins)) < len(bins):
-        print("⚠️  Duplicate bin edges detected, using linear spacing...")
-        bins = np.linspace(min_price, max_price, n_bins)
-    
     draw_df["bin"] = pd.cut(draw_df.price, bins=bins)
-    
-    def safe_percentile(x):
-        """Calculate 1st percentile, handling empty groups."""
-        if len(x) == 0:
-            return np.nan
-        # Ensure we have meaningful drawdowns (not zero)
-        valid_draws = x[x < -0.001]  # Only negative drawdowns > 0.1%
-        if len(valid_draws) == 0:
-            return -0.05  # Default 5% minimum drawdown
-        return np.percentile(valid_draws, 1)
-    
+
     bin_stats = draw_df.groupby("bin", observed=False).agg(
-            p=("price", "median"),
-            d99=("draw", safe_percentile),  # 1st percentile = worst 1%
-            count=("draw", "count")
-        ).dropna()
-    
-    # Filter bins with sufficient data points
-    bin_stats = bin_stats[bin_stats['count'] >= 3]
-    
-    print(f"📊 Valid bins for curve fitting: {len(bin_stats)}")
-    
+        p=("price", "median"),
+        d95=("draw", lambda x: np.percentile(np.abs(x), 95) if len(x) > 0 else 0.3),
+        count=("draw", "count")
+    ).dropna()
+
+    # Filter bins with sufficient data
+    bin_stats = bin_stats[bin_stats['count'] >= 2]
+
     if len(bin_stats) < 3:
-        print("⚠️  Insufficient binned data, using simple drawdown model...")
-        def draw99(price: float) -> float:
-            return 0.8 * (price / 50000) ** (-0.3)
-    else:
-        try:
-            # DIAGNOSTIC PHASE - Let's examine the data in detail
-            drawdown_values = bin_stats.d99.values
-            price_values = bin_stats.p.values
-            
-            print(f"🔍 CURVE FITTING DIAGNOSTICS:")
-            print(f"   Raw bins: {len(bin_stats)}")
-            print(f"   Price range: ${price_values.min():.0f} - ${price_values.max():.0f}")
-            print(f"   Drawdown range: {drawdown_values.min():.1%} - {drawdown_values.max():.1%}")
-            print(f"   Sample drawdowns: {drawdown_values[:5]}")
-            print(f"   Sample prices: {price_values[:5]}")
-            
-            # Filter out any remaining problematic values
-            valid_mask = (drawdown_values < -0.001) & (price_values > 0) & np.isfinite(drawdown_values) & np.isfinite(price_values)
-            if np.sum(valid_mask) < 3:
-                raise ValueError(f"Insufficient valid drawdown data: only {np.sum(valid_mask)} valid points")
-            
-            filtered_drawdowns = np.abs(drawdown_values[valid_mask])
-            filtered_prices = price_values[valid_mask]
-            
-            print(f"   After filtering: {len(filtered_drawdowns)} valid points")
-            print(f"   Filtered drawdown range: {filtered_drawdowns.min():.1%} - {filtered_drawdowns.max():.1%}")
-            
-            # Check if data shows expected power law relationship
-            price_ratio = filtered_prices.max() / filtered_prices.min()
-            drawdown_ratio = filtered_drawdowns.max() / filtered_drawdowns.min()
-            
-            print(f"   Price ratio (max/min): {price_ratio:.1f}x")
-            print(f"   Drawdown ratio (max/min): {drawdown_ratio:.1f}x")
-            
-            if price_ratio < 1.5:
-                raise ValueError(f"Insufficient price variation for power law fit: {price_ratio:.1f}x")
-            
-            # Fit a log-log linear regression  ln|d| = ln a  – b ln p
-            y = np.log(filtered_drawdowns)
-            x = np.log(filtered_prices)
-            
-            print(f"   Log-transformed ranges: x={x.min():.2f} to {x.max():.2f}, y={y.min():.2f} to {y.max():.2f}")
-            
-            # Final validation of log-transformed data
-            if np.any(np.isnan(y)) or np.any(np.isnan(x)) or np.any(np.isinf(y)) or np.any(np.isinf(x)):
-                raise ValueError("Invalid data after log transformation")
-            
-            # Perform the fit with error checking
-            try:
-                coeffs = np.polyfit(x, y, 1)
-                b, ln_a = coeffs * np.array([-1, 1])  # adjust sign convention
-                a = math.exp(ln_a)
-                
-                # Calculate R-squared for goodness of fit
-                y_pred = coeffs[0] * x + coeffs[1]
-                r_squared = 1 - np.sum((y - y_pred)**2) / np.sum((y - np.mean(y))**2)
-                
-                print(f"   Fit results: a={a:.8f}, b={b:.4f}, R²={r_squared:.3f}")
-                
-            except np.linalg.LinAlgError as e:
-                raise ValueError(f"Linear algebra error in fitting: {e}")
-            
-            # Validate fitted parameters with detailed checks
-            checks = {
-                "a_positive": a > 0,
-                "a_reasonable": 0.0001 < a < 10,
-                "b_finite": np.isfinite(b),
-                "b_reasonable": -1 < b < 3,  # Allow steeper negative slopes
-                "r_squared_ok": r_squared > 0.1  # At least some correlation
-            }
-            
-            print(f"   Parameter checks: {checks}")
-            
-            failed_checks = [k for k, v in checks.items() if not v]
-            if failed_checks:
-                raise ValueError(f"Parameter validation failed: {failed_checks}")
-            
-            # Test the model with sample prices to ensure reasonable outputs
-            test_prices = [30000, 50000, 75000, 100000, 150000]
-            test_results = []
-            for p in test_prices:
-                try:
-                    result = a * (p ** (-b))
-                    test_results.append(result)
-                except:
-                    test_results.append(float('nan'))
-            
-            valid_predictions = [r for r in test_results if 0.01 < r < 0.95 and np.isfinite(r)]
-            
-            if len(valid_predictions) < 3:
-                raise ValueError(f"Model produces too many invalid predictions: {test_results}")
-            
-            print(f"📈 SUCCESS: Fitted power law model: draw99(p) = {a:.8f} * p^(-{b:.4f})")
-            print(f"📊 Model validation: R²={r_squared:.3f}, {len(filtered_prices)} points")
-            print(f"📝 Test predictions:")
-            for p, r in zip(test_prices, test_results):
-                if np.isfinite(r):
-                    print(f"     ${p/1000:.0f}k → {r:.1%}")
-            
-            def draw99(price: float) -> float:
-                """Return the 99% worst expected drawdown (as +fraction) for a price."""
-                try:
-                    result = a * (price ** (-b))
-                    # Robust bounds checking
-                    if not np.isfinite(result) or result <= 0:
-                        # Fallback using median historical drawdown with price adjustment
-                        median_drawdown = np.median(filtered_drawdowns)
-                        result = median_drawdown * (price / np.median(filtered_prices)) ** (-0.2)
-                    
-                    return max(0.02, min(0.90, result))  # 2% to 90% bounds
-                except Exception as fallback_error:
-                    # Emergency fallback
-                    return 0.5 * (price / 70000) ** (-0.3)
-                
-        except Exception as e:
-            print(f"⚠️  Power law curve fitting failed: {e}")
-            
-            # FALLBACK STRATEGY 1: Polynomial fit
-            try:
-                print("📊 Attempting polynomial drawdown model...")
-                
-                # Try quadratic relationship in normal space (not log)
-                valid_mask = (bin_stats.d99.values < -0.001) & (bin_stats.p.values > 0)
-                if np.sum(valid_mask) >= 3:
-                    x_poly = bin_stats.p.values[valid_mask]
-                    y_poly = np.abs(bin_stats.d99.values[valid_mask])
-                    
-                    # Normalize prices to improve numerical stability
-                    x_norm = x_poly / 50000  # Normalize around $50k
-                    
-                    # Try quadratic: drawdown = c0 + c1*x + c2*x^2
-                    if len(x_norm) >= 6:  # Need enough points for quadratic
-                        coeffs = np.polyfit(x_norm, y_poly, 2)
-                        c2, c1, c0 = coeffs
-                        
-                        # Test model at several points
-                        test_norm = np.array([0.6, 1.0, 1.5, 2.0])  # $30k, $50k, $75k, $100k
-                        test_results = c2 * test_norm**2 + c1 * test_norm + c0
-                        
-                        if all(0.01 < r < 0.95 for r in test_results):
-                            print(f"📈 Polynomial model: draw99(p) = {c2:.2e}*(p/50k)² + {c1:.4f}*(p/50k) + {c0:.4f}")
-                            
-                            def draw99(price: float) -> float:
-                                p_norm = price / 50000
-                                result = c2 * p_norm**2 + c1 * p_norm + c0
-                                return max(0.02, min(0.90, result))
-                        else:
-                            raise ValueError("Polynomial produces invalid results")
-                    else:
-                        raise ValueError("Not enough points for polynomial fit")
-                else:
-                    raise ValueError("No valid data for polynomial fit")
-                    
-            except Exception as poly_error:
-                print(f"   Polynomial fit failed: {poly_error}")
-                
-                # FALLBACK STRATEGY 2: Robust empirical model
-                print("📊 Using robust empirical drawdown model...")
-                
-                # Calculate percentile-based drawdowns from raw data
-                all_drawdowns = np.abs(draw_df.draw.values)
-                all_prices = draw_df.price.values
-                
-                # Remove outliers (beyond 3 standard deviations)
-                drawdown_mean = np.mean(all_drawdowns)
-                drawdown_std = np.std(all_drawdowns)
-                price_mean = np.mean(all_prices)
-                price_std = np.std(all_prices)
-                
-                clean_mask = (
-                    (np.abs(all_drawdowns - drawdown_mean) < 3 * drawdown_std) &
-                    (np.abs(all_prices - price_mean) < 3 * price_std)
-                )
-                
-                clean_drawdowns = all_drawdowns[clean_mask]
-                clean_prices = all_prices[clean_mask]
-                
-                # Use percentiles for different price ranges
-                low_price_thresh = np.percentile(clean_prices, 33)
-                high_price_thresh = np.percentile(clean_prices, 67)
-                
-                low_price_drawdown = np.percentile(clean_drawdowns[clean_prices <= low_price_thresh], 95)
-                mid_price_drawdown = np.percentile(clean_drawdowns[
-                    (clean_prices > low_price_thresh) & (clean_prices <= high_price_thresh)
-                ], 95)
-                high_price_drawdown = np.percentile(clean_drawdowns[clean_prices > high_price_thresh], 95)
-                
-                print(f"📈 Empirical model:")
-                print(f"   Low prices (<${low_price_thresh:.0f}): {low_price_drawdown:.1%}")
-                print(f"   Mid prices (${low_price_thresh:.0f}-${high_price_thresh:.0f}): {mid_price_drawdown:.1%}")  
-                print(f"   High prices (>${high_price_thresh:.0f}): {high_price_drawdown:.1%}")
-                
-                def draw99(price: float) -> float:
-                    """Empirical drawdown model with price tiers."""
-                    if price <= low_price_thresh:
-                        base = low_price_drawdown
-                    elif price <= high_price_thresh:
-                        # Linear interpolation between low and mid
-                        weight = (price - low_price_thresh) / (high_price_thresh - low_price_thresh)
-                        base = low_price_drawdown * (1 - weight) + mid_price_drawdown * weight
-                    else:
-                        # Linear interpolation between mid and high, with gentle extrapolation
-                        if price > high_price_thresh * 2:
-                            # Very high prices get modestly higher drawdowns
-                            base = high_price_drawdown * (1 + 0.1 * np.log(price / high_price_thresh))
-                        else:
-                            weight = (price - high_price_thresh) / high_price_thresh
-                            base = mid_price_drawdown * (1 - weight) + high_price_drawdown * weight
-                    
-                    return max(0.02, min(0.90, base))
+        return lambda price: max(0.15, min(0.80, 0.4 * (price / 50000) ** (-0.15)))
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Section 4 · Historical Price Movement Analysis
-# ──────────────────────────────────────────────────────────────────────────────
-def analyze_price_movements(price_series: pd.Series, jump_amount: float = 30000.0) -> dict:
-    """
-    Analyze historical Bitcoin price movements to predict realistic timing 
-    for future $30K appreciation cycles.
-    
-    Returns statistics on how long Bitcoin typically takes to appreciate 
-    by jump_amount from various starting price levels.
-    """
-    print(f"📊 Analyzing historical ${jump_amount:,.0f} price movements...")
-    
-    movements = []
-    dates = price_series.index
-    prices = price_series.values
-    n = len(prices)
-    
-    # Find all instances where price increased by jump_amount
-    for i in range(n - 1):
-        start_price = prices[i]
-        target_price = start_price + jump_amount
-        
-        # Look forward to find when target was reached
-        for j in range(i + 1, min(i + 365, n)):  # Max 1 year lookforward
-            if prices[j] >= target_price:
-                days_taken = j - i
-                start_date = dates[i]
-                end_date = dates[j]
-                
-                # Calculate statistics for this movement
-                max_price_during = np.max(prices[i:j+1])
-                min_price_during = np.min(prices[i:j+1])
-                end_price = prices[j]
-                
-                # Calculate rate of change (daily average)
-                daily_rate = (end_price - start_price) / days_taken
-                annualized_rate = daily_rate * 365 / start_price
-                
-                movements.append({
-                    'start_date': start_date,
-                    'end_date': end_date,
-                    'start_price': start_price,
-                    'end_price': end_price,
-                    'days_taken': days_taken,
-                    'daily_rate_usd': daily_rate,
-                    'annualized_rate_pct': annualized_rate * 100,
-                    'max_during_cycle': max_price_during,
-                    'min_during_cycle': min_price_during,
-                    'overshoot_amount': max_price_during - target_price,
-                    'price_range': start_price // 10000 * 10000  # Bin by $10K ranges
-                })
-                break
-    
-    if not movements:
-        print(f"⚠️  No ${jump_amount:,.0f} movements found in historical data")
-        return {
-            'avg_days': 180,  # Default assumption
-            'std_days': 60,
-            'movements_found': 0,
-            'price_range_stats': {}
-        }
-    
-    df = pd.DataFrame(movements)
-    
-    # Calculate statistics by price range
-    price_range_stats = {}
-    for price_range in sorted(df['price_range'].unique()):
-        range_data = df[df['price_range'] == price_range]
-        price_range_stats[price_range] = {
-            'count': len(range_data),
-            'avg_days': range_data['days_taken'].mean(),
-            'std_days': range_data['days_taken'].std(),
-            'median_days': range_data['days_taken'].median(),
-            'min_days': range_data['days_taken'].min(),
-            'max_days': range_data['days_taken'].max(),
-            'avg_daily_rate': range_data['daily_rate_usd'].mean(),
-            'success_rate': len(range_data) / len(df[df['start_price'] >= price_range])
-        }
-    
-    # Overall statistics
-    overall_stats = {
-        'movements_found': len(df),
-        'avg_days': df['days_taken'].mean(),
-        'std_days': df['days_taken'].std(),
-        'median_days': df['days_taken'].median(),
-        'price_range_stats': price_range_stats,
-        'recent_trend': df.tail(10)['days_taken'].mean() if len(df) >= 10 else df['days_taken'].mean()
-    }
-    
-    print(f"📈 Found {len(df)} historical ${jump_amount:,.0f} movements")
-    print(f"   Average time: {overall_stats['avg_days']:.0f} days ({overall_stats['avg_days']/30:.1f} months)")
-    print(f"   Median time: {overall_stats['median_days']:.0f} days")
-    print(f"   Range: {df['days_taken'].min():.0f} - {df['days_taken'].max():.0f} days")
-    
-    return overall_stats
+    # Simple interpolation model
+    prices = bin_stats.p.values
+    drawdowns = bin_stats.d95.values
 
-def predict_cycle_duration(start_price: float, movement_stats: dict, jump_amount: float = 30000.0) -> tuple:
-    """
-    Predict how long a $30K price appreciation will take based on 
-    historical patterns and current price level.
-    
-    Returns: (expected_days, confidence_interval_days)
-    """
-    if not movement_stats['price_range_stats']:
-        # Fallback to overall average
-        return movement_stats['avg_days'], movement_stats['std_days']
-    
-    # Find the closest price range
-    price_range = start_price // 10000 * 10000
-    
-    # Look for exact match first
-    if price_range in movement_stats['price_range_stats']:
-        stats = movement_stats['price_range_stats'][price_range]
-        return stats['avg_days'], stats['std_days']
-    
-    # Find nearest ranges and interpolate
-    available_ranges = sorted(movement_stats['price_range_stats'].keys())
-    
-    if start_price <= min(available_ranges):
-        # Use lowest range data
-        stats = movement_stats['price_range_stats'][min(available_ranges)]
-        return stats['avg_days'], stats['std_days']
-    elif start_price >= max(available_ranges):
-        # Extrapolate based on trend (higher prices typically take longer)
-        highest_range = max(available_ranges)
-        stats = movement_stats['price_range_stats'][highest_range]
-        
-        # Apply scaling factor for higher prices (diminishing returns effect)
-        scaling_factor = 1 + 0.1 * np.log(start_price / highest_range)
-        scaled_days = stats['avg_days'] * scaling_factor
-        
-        return scaled_days, stats['std_days'] * scaling_factor
-    else:
-        # Interpolate between two nearest ranges
-        lower_range = max([r for r in available_ranges if r <= price_range])
-        upper_range = min([r for r in available_ranges if r > price_range])
-        
-        lower_stats = movement_stats['price_range_stats'][lower_range]
-        upper_stats = movement_stats['price_range_stats'][upper_range]
-        
-        # Linear interpolation
-        weight = (start_price - lower_range) / (upper_range - lower_range)
-        interpolated_days = lower_stats['avg_days'] * (1 - weight) + upper_stats['avg_days'] * weight
-        interpolated_std = lower_stats['std_days'] * (1 - weight) + upper_stats['std_days'] * weight
-        
-        return interpolated_days, interpolated_std
+    def drawdown_model(price: float) -> float:
+        if price <= prices.min():
+            return drawdowns[0]
+        elif price >= prices.max():
+            return drawdowns[-1]
+        else:
+            # Linear interpolation
+            idx = np.searchsorted(prices, price)
+            if idx == 0:
+                return drawdowns[0]
+            elif idx >= len(prices):
+                return drawdowns[-1]
+            else:
+                weight = (price - prices[idx-1]) / (prices[idx] - prices[idx-1])
+                return drawdowns[idx-1] * (1 - weight) + drawdowns[idx] * weight
 
-def simulate_realistic_price_path(start_price: float, end_price: float, days: int, 
-                                  historical_volatility: float = 0.04) -> np.ndarray:
-    """
-    Generate a realistic price path from start_price to end_price over 'days' period.
-    Uses geometric Brownian motion with drift to reach target.
-    
-    Returns: Array of daily prices
-    """
+    return drawdown_model
+
+def simulate_price_path(start_price: float, target_price: float, days: int) -> np.ndarray:
+    """Generate realistic price path using geometric Brownian motion."""
     if days <= 1:
-        return np.array([start_price, end_price])
-    
-    # Calculate required drift to reach target
-    total_return = np.log(end_price / start_price)
+        return np.array([start_price, target_price])
+
+    # Calculate drift to reach target
+    total_return = np.log(target_price / start_price)
     drift = total_return / days
-    
-    # Generate random price path
-    np.random.seed(42)  # For reproducible results
-    dt = 1.0  # Daily steps
-    random_shocks = np.random.normal(0, historical_volatility * np.sqrt(dt), days - 1)
-    
-    # Build price path
+
+    # Generate path
+    np.random.seed(42)
+    dt = 1.0
+    volatility = 0.045  # 4.5% daily volatility
+    random_shocks = np.random.normal(0, volatility * np.sqrt(dt), days - 1)
+
     log_returns = drift + random_shocks
     log_prices = np.log(start_price) + np.cumsum(np.concatenate([[0], log_returns]))
     prices = np.exp(log_prices)
-    
-    # Ensure we end at target price (adjust final value)
-    prices[-1] = end_price
-    
+
+    # Ensure we end at target
+    prices[-1] = target_price
+
     return prices
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Section 5 · Helper functions (defined before usage)
-# ──────────────────────────────────────────────────────────────────────────────
-def btc_needed_for_cure(price: float, loan: float) -> float:
-    """
-    Given entry price and loan size, compute how much BTC must be added
-    to keep LTV ≤ 90 % in a 99 % drawdown.
-    """
-    drop_pct = draw99(price)        # e.g. 0.25 → –25 %
-    worst_price = price * (1 - drop_pct)
-    # LTV = loan / (collateral * worst_price)
-    # Want collateral s.t. loan / (collat * worst_price) ≤ 0.90
-    return loan / (0.90 * worst_price)
+class LoanSimulator:
+    def __init__(self):
+        # Contract terms based on Figure Lending analysis
+        self.min_loan = 10000.0
+        self.base_apr = 0.115  # 11.5% for $10K loan
+        self.origination_fee_rate = 0.033  # ~3.3% estimated
+        self.processing_fee_rate = 0.02  # 2% on liquidations
 
-def cap_next_loan(price: float, reserve_btc: float) -> float:
-    """
-    Find the max loan principal such that reserve ≥ needed cure BTC.
-    Solve inverse of btc_needed_for_cure.
-    """
-    drop_pct = draw99(price)
-    worst_price = price * (1 - drop_pct)
-    return reserve_btc * worst_price * 0.90
+        # LTV thresholds
+        self.baseline_ltv = 0.75
+        self.margin_call_ltv = 0.85
+        self.liquidation_ltv = 0.90
+        self.collateral_release_ltv = 0.35
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Section 5 · Simulation parameters & state
-# ──────────────────────────────────────────────────────────────────────────────
-params = {
-    "start_price": 118_000.0,
-    "start_btc_free": 0.24,
-    "start_collateral_btc": 0.12,
-    "loan_rate": 0.115,        # APR lump-sum
-    "exit_jump": 30_000.0,
-    "margin_LTV": 0.90,
-}
+        # Operational parameters
+        self.cure_period_hours = 48
+        self.exit_jump = 30000.0
 
-# Calculate optimal starting loan using the same logic as subsequent cycles
-initial_loan = cap_next_loan(params["start_price"], params["start_collateral_btc"])
+    def calculate_monthly_payment(self, principal: float) -> float:
+        """Calculate monthly interest-only payment."""
+        return principal * self.base_apr / 12
 
-state = {
-    "cycle": 0,
-    "price": params["start_price"],
-    "free_btc": params["start_btc_free"] - params["start_collateral_btc"],
-    "collat_btc": params["start_collateral_btc"],  # locked reserve = collat
-    "loan": initial_loan,
-    "btc_goal": 1.0,
-}
+    def calculate_deferred_interest(self, principal: float, days: int) -> float:
+        """Calculate compound daily interest if deferred."""
+        daily_rate = self.base_apr / 365
+        return principal * ((1 + daily_rate) ** days - 1)
 
-print(f"💰 Calculated optimal starting loan: ${initial_loan:,.0f} (vs. hardcoded $10,000)")
+    def calculate_ltv(self, loan_balance: float, collateral_btc: float, btc_price: float) -> float:
+        """Calculate current LTV ratio."""
+        if collateral_btc <= 0 or btc_price <= 0:
+            return 1.0
+        return loan_balance / (collateral_btc * btc_price)
 
-records = []
+    def check_ltv_triggers(self, ltv: float) -> str:
+        """Check what action is triggered by current LTV."""
+        if ltv >= self.liquidation_ltv:
+            return "FORCE_LIQUIDATION"
+        elif ltv >= self.margin_call_ltv:
+            return "MARGIN_CALL"
+        elif ltv <= self.collateral_release_ltv:
+            return "COLLATERAL_RELEASE_ELIGIBLE"
+        else:
+            return "NORMAL"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Section 6 · Event-driven cycle loop
-# ──────────────────────────────────────────────────────────────────────────────
-while state["free_btc"] < state["btc_goal"]:
-    state["cycle"] += 1
-    entry_price = state["price"]
-    loan = state["loan"]
+    def calculate_required_collateral(self, loan_amount: float, btc_price: float, 
+                                    worst_case_price: float) -> float:
+        """Calculate BTC needed to avoid liquidation in worst case."""
+        # Need enough collateral so that at worst_case_price, LTV < 90%
+        return loan_amount / (0.89 * worst_case_price)  # Small buffer below 90%
 
-    # Step 1: compute cure requirement & check reserve
-    needed_btc = btc_needed_for_cure(entry_price, loan)
-    if needed_btc > state["collat_btc"]:
-        # Reserve insufficient: shrink loan
-        loan = cap_next_loan(entry_price, state["collat_btc"])
-        state["loan"] = loan
+    def simulate_cycle(self, entry_price: float, collateral_btc: float, 
+                      loan_amount: float, drawdown_model) -> dict:
+        """Simulate one complete loan cycle with realistic dynamics."""
 
-    # Step 2: immediate margin call at worst drawdown
-    state["collat_btc"] += needed_btc
-    state["free_btc"] -= needed_btc  # moved to collateral locker
+        # Add origination fee to loan balance
+        origination_fee = loan_amount * self.origination_fee_rate
+        total_loan_balance = loan_amount + origination_fee
 
-    # Step 3: Predict realistic cycle duration and price path
-    expected_days, std_days = predict_cycle_duration(entry_price, movement_stats, params["exit_jump"])
-    
-    # Add some randomness to cycle duration (but keep deterministic for now)
-    actual_days = max(7, int(expected_days))  # Minimum 1 week
-    
-    # Generate realistic price path (for future margin call modeling)
-    exit_price = entry_price + params["exit_jump"]
-    price_path = simulate_realistic_price_path(entry_price, exit_price, actual_days)
-    state["price"] = exit_price
+        # Predict cycle duration (simplified model)
+        # Higher prices generally take longer to appreciate by fixed amounts
+        base_days = 120  # 4 months base
+        price_factor = max(0.5, min(2.0, entry_price / 70000))  # Scale with price level
+        expected_days = int(base_days * price_factor)
 
-    # BTC purchased with loan (assuming instant buy at entry price)
-    btc_bought = loan / entry_price
+        # Generate price path
+        exit_price = entry_price + self.exit_jump
+        price_path = simulate_price_path(entry_price, exit_price, expected_days)
 
-    # Realistic compound interest calculation with deferred interest option
-    daily_rate = params["loan_rate"] / 365
-    
-    # Calculate both payment strategies
-    monthly_payment = loan * params["loan_rate"] / 12
-    total_monthly_payments = (actual_days / 30) * monthly_payment
-    
-    # Strategy 1: Monthly payments (reduces collateral each month)
-    btc_sold_for_monthly_payments = total_monthly_payments / ((entry_price + exit_price) / 2)
-    
-    # Strategy 2: Deferred interest (compounds but preserves collateral)
-    deferred_interest = loan * ((1 + daily_rate) ** actual_days - 1)
-    
-    # Choose optimal strategy based on market conditions and LTV risk
-    # Generally prefer deferral during bull markets to preserve appreciating BTC
-    ltv_with_deferral = (loan + deferred_interest) / (state["collat_btc"] * exit_price)
-    ltv_with_payments = loan / ((state["collat_btc"] - btc_sold_for_monthly_payments) * exit_price)
-    
-    # Use deferred interest if LTV remains manageable and we're in a bull market
-    if ltv_with_deferral < 0.75 and exit_price > entry_price:
-        # Deferred interest strategy
-        interest = deferred_interest
-        payoff = loan + interest
-        collateral_impact = 0  # No BTC sold during cycle
-        strategy_used = "deferred"
+        # Determine payment strategy
+        # Use deferred interest if expected LTV at exit remains manageable
+        deferred_interest = self.calculate_deferred_interest(total_loan_balance, expected_days)
+        final_loan_balance_deferred = total_loan_balance + deferred_interest
+        exit_ltv_deferred = self.calculate_ltv(final_loan_balance_deferred, collateral_btc, exit_price)
+
+        # Calculate monthly payment strategy impact
+        monthly_payment = self.calculate_monthly_payment(total_loan_balance)
+        num_payments = expected_days / 30
+        total_monthly_interest = monthly_payment * num_payments
+
+        # Choose strategy: defer if exit LTV < 75%, otherwise pay monthly
+        if exit_ltv_deferred < 0.75:
+            strategy = "deferred"
+            total_interest = deferred_interest
+            final_loan_balance = final_loan_balance_deferred
+            btc_sold_during_cycle = 0  # No monthly sales
+        else:
+            strategy = "monthly_payments"
+            total_interest = total_monthly_interest
+            final_loan_balance = total_loan_balance + total_interest
+            # Approximate BTC sold for monthly payments
+            avg_price = (entry_price + exit_price) / 2
+            btc_sold_during_cycle = total_monthly_interest / avg_price
+
+        # Check for margin calls during cycle
+        worst_expected_drawdown = drawdown_model(entry_price)
+        worst_price = entry_price * (1 - worst_expected_drawdown)
+
+        margin_call_occurred = False
+        liquidation_occurred = False
+        cure_btc_needed = 0
+
+        # Check if margin call would occur at worst drawdown
+        effective_collateral = collateral_btc - btc_sold_during_cycle / 2  # Average impact
+        worst_ltv = self.calculate_ltv(total_loan_balance, effective_collateral, worst_price)
+
+        if worst_ltv >= self.liquidation_ltv:
+            liquidation_occurred = True
+            liquidation_fee = total_loan_balance * self.processing_fee_rate
+            final_loan_balance += liquidation_fee
+        elif worst_ltv >= self.margin_call_ltv:
+            margin_call_occurred = True
+            # Calculate additional BTC needed to cure
+            target_ltv = self.baseline_ltv
+            required_collateral = total_loan_balance / (target_ltv * worst_price)
+            cure_btc_needed = max(0, required_collateral - effective_collateral)
+
+        # Calculate BTC flows
+        btc_purchased = loan_amount / entry_price  # Initial purchase with loan proceeds
+        btc_sold_at_exit = final_loan_balance / exit_price  # Sell to repay loan
+
+        # Net BTC change
+        net_btc_gain = btc_purchased - btc_sold_at_exit - btc_sold_during_cycle - cure_btc_needed
+
+        return {
+            "entry_price": entry_price,
+            "exit_price": exit_price,
+            "cycle_duration_days": expected_days,
+            "loan_amount": loan_amount,
+            "origination_fee": origination_fee,
+            "total_loan_balance": total_loan_balance,
+            "payment_strategy": strategy,
+            "total_interest": total_interest,
+            "final_loan_balance": final_loan_balance,
+            "interest_rate_effective": (total_interest / loan_amount) * 100,
+            "btc_purchased": btc_purchased,
+            "btc_sold_during_cycle": btc_sold_during_cycle,
+            "btc_sold_at_exit": btc_sold_at_exit,
+            "cure_btc_needed": cure_btc_needed,
+            "net_btc_gain": net_btc_gain,
+            "margin_call_occurred": margin_call_occurred,
+            "liquidation_occurred": liquidation_occurred,
+            "worst_expected_drawdown": worst_expected_drawdown,
+            "worst_ltv": worst_ltv,
+            "exit_ltv": self.calculate_ltv(final_loan_balance, collateral_btc - cure_btc_needed, exit_price)
+        }
+
+def main():
+    """Run the improved Bitcoin lending simulation."""
+    print("🚀 Starting Accurate Bitcoin Collateral Lending Simulation")
+    print("=" * 60)
+
+    # Load price data
+    prices = load_btc_history()
+    print(f"📊 Loaded {len(prices)} days of price data")
+
+    # Analyze historical drawdowns
+    draw_df = worst_drop_until_recovery(prices, 30000.0)
+    print(f"📈 Analyzed {len(draw_df)} historical recovery cycles")
+
+    # Fit drawdown model
+    drawdown_model = fit_drawdown_model(draw_df)
+
+    # Initialize simulation
+    simulator = LoanSimulator()
+
+    # Starting conditions
+    start_btc = 0.24
+    start_price = 118000.0
+    btc_goal = 1.0
+
+    # Calculate initial conservative loan amount
+    initial_collateral = start_btc / 2  # Reserve half as buffer
+    worst_case_drop = drawdown_model(start_price)
+    worst_case_price = start_price * (1 - worst_case_drop)
+    max_safe_loan = initial_collateral * worst_case_price * 0.75  # 75% LTV at worst case
+
+    initial_loan = min(max_safe_loan, 50000.0)  # Cap at reasonable amount
+    initial_loan = max(initial_loan, simulator.min_loan)  # Ensure minimum
+
+    print(f"💰 Initial loan amount: ${initial_loan:,.0f}")
+    print(f"🪙 Initial collateral: {initial_collateral:.4f} BTC")
+    print(f"📉 Expected worst drawdown: {worst_case_drop:.1%}")
+
+    # Simulation state
+    free_btc = start_btc - initial_collateral
+    collateral_btc = initial_collateral
+    current_price = start_price
+    cycle = 0
+
+    results = []
+
+    while free_btc < btc_goal and cycle < 50:  # Safety limit
+        cycle += 1
+
+        # Determine loan size for this cycle
+        worst_drop = drawdown_model(current_price)
+        worst_price = current_price * (1 - worst_drop)
+        max_loan = collateral_btc * worst_price * 0.75
+        loan_amount = min(max_loan, free_btc * current_price * 0.5)  # Conservative sizing
+        loan_amount = max(loan_amount, simulator.min_loan)
+
+        # Simulate this cycle
+        cycle_result = simulator.simulate_cycle(
+            current_price, collateral_btc, loan_amount, drawdown_model
+        )
+
+        # Check if liquidation occurred
+        if cycle_result["liquidation_occurred"]:
+            print(f"💥 LIQUIDATION in cycle {cycle} - simulation terminated")
+            cycle_result["cycle"] = cycle
+            cycle_result["free_btc_before"] = free_btc
+            cycle_result["collateral_btc"] = collateral_btc
+            cycle_result["free_btc_after"] = 0  # Lost everything
+            results.append(cycle_result)
+            break
+
+        # Apply cycle results
+        btc_change = cycle_result["net_btc_gain"] - cycle_result["cure_btc_needed"]
+        free_btc += btc_change
+        collateral_btc -= cycle_result["cure_btc_needed"]  # BTC moved to cure margin call
+        current_price = cycle_result["exit_price"]
+
+        # Add tracking info
+        cycle_result["cycle"] = cycle
+        cycle_result["free_btc_before"] = free_btc - btc_change
+        cycle_result["collateral_btc"] = collateral_btc
+        cycle_result["free_btc_after"] = free_btc
+        cycle_result["total_btc"] = free_btc + collateral_btc
+
+        results.append(cycle_result)
+
+        print(f"📊 Cycle {cycle}: ${current_price:,.0f} → ${cycle_result['exit_price']:,.0f}, "
+              f"BTC: {free_btc:.4f}, Strategy: {cycle_result['payment_strategy']}")
+
+        # Stop if we've reached our goal
+        if free_btc >= btc_goal:
+            print(f"🎯 Goal reached! Free BTC: {free_btc:.4f}")
+            break
+
+        # Prepare for next cycle - reset collateral to safe level
+        if free_btc > 0.1:  # Ensure we have enough for collateral
+            collateral_btc = min(free_btc / 2, 0.5)  # Conservative collateral management
+            free_btc -= collateral_btc
+
+    # Save and analyze results
+    if results:
+        df = pd.DataFrame(results)
+        df.to_csv("cycles_log.csv", index=False)
+
+        # Generate plots
+        plt.figure(figsize=(12, 8))
+
+        plt.subplot(2, 2, 1)
+        plt.plot(df.cycle, df.exit_price, marker="o")
+        plt.xlabel("Cycle")
+        plt.ylabel("BTC Exit Price ($)")
+        plt.title("BTC Price per Cycle")
+
+        plt.subplot(2, 2, 2)
+        plt.plot(df.cycle, df.free_btc_after, marker="o", color="orange")
+        plt.xlabel("Cycle")
+        plt.ylabel("Free BTC")
+        plt.title("BTC Holdings Over Time")
+
+        plt.subplot(2, 2, 3)
+        strategy_colors = {'deferred': 'blue', 'monthly_payments': 'red'}
+        colors = [strategy_colors.get(s, 'gray') for s in df.payment_strategy]
+        plt.scatter(df.cycle, df.interest_rate_effective, c=colors, alpha=0.7)
+        plt.xlabel("Cycle")
+        plt.ylabel("Effective Interest Rate (%)")
+        plt.title("Interest Rates by Strategy")
+        plt.legend(['Deferred', 'Monthly Payments'])
+
+        plt.subplot(2, 2, 4)
+        margin_calls = df[df.margin_call_occurred]
+        plt.bar(range(len(df)), df.worst_ltv, alpha=0.6)
+        plt.axhline(y=0.85, color='orange', linestyle='--', label='Margin Call (85%)')
+        plt.axhline(y=0.90, color='red', linestyle='--', label='Liquidation (90%)')
+        if len(margin_calls) > 0:
+            plt.scatter(margin_calls.cycle - 1, margin_calls.worst_ltv, color='red', s=100, label='Margin Calls')
+        plt.xlabel("Cycle")
+        plt.ylabel("Worst LTV During Cycle")
+        plt.title("LTV Risk Management")
+        plt.legend()
+
+        plt.tight_layout()
+        plt.savefig("simulation_analysis.png", dpi=150, bbox_inches='tight')
+
+        # Print summary
+        print("\n" + "=" * 60)
+        print("📊 SIMULATION SUMMARY")
+        print("=" * 60)
+
+        total_interest = df.total_interest.sum()
+        total_loans = df.loan_amount.sum()
+        final_btc = df.free_btc_after.iloc[-1] if len(df) > 0 else 0
+        total_cycles = len(df)
+        total_days = df.cycle_duration_days.sum()
+
+        deferred_cycles = len(df[df.payment_strategy == 'deferred'])
+        monthly_cycles = len(df[df.payment_strategy == 'monthly_payments'])
+        margin_calls = len(df[df.margin_call_occurred])
+        liquidations = len(df[df.liquidation_occurred])
+
+        print(f"💰 Final BTC Holdings: {final_btc:.4f} BTC")
+        print(f"🔄 Total Cycles: {total_cycles}")
+        print(f"⏱️  Total Time: {total_days:.0f} days ({total_days/365:.1f} years)")
+        print(f"💸 Total Interest Paid: ${total_interest:,.0f}")
+        print(f"📊 Average Interest Rate: {100*total_interest/total_loans:.1f}%")
+        print(f"🔵 Deferred Interest Cycles: {deferred_cycles}")
+        print(f"🔴 Monthly Payment Cycles: {monthly_cycles}")
+        print(f"⚠️  Margin Calls: {margin_calls}")
+        print(f"💥 Liquidations: {liquidations}")
+
+        if final_btc >= btc_goal:
+            print(f"🎯 SUCCESS: Goal of {btc_goal} BTC achieved!")
+        else:
+            print(f"❌ Goal not reached. Strategy may not be viable.")
+
+        print(f"\nFiles saved: cycles_log.csv, simulation_analysis.png")
+
     else:
-        # Monthly payment strategy
-        interest = total_monthly_payments
-        payoff = loan + interest
-        collateral_impact = btc_sold_for_monthly_payments
-        strategy_used = "monthly_payments"
+        print("❌ No cycles completed - strategy failed immediately")
 
-    # Calculate BTC flows based on chosen strategy
-    if strategy_used == "deferred":
-        # Only sell BTC for final payoff (loan + compound interest)
-        btc_sold = payoff / exit_price
-        net_collateral_btc = state["collat_btc"]  # No reduction during cycle
-    else:
-        # Sell BTC for final loan principal + any remaining interest
-        btc_sold = loan / exit_price  # Principal only at exit
-        net_collateral_btc = state["collat_btc"] - collateral_impact  # Reduced by monthly sales
-    
-    gain_btc = btc_bought - btc_sold
-
-    # Step 4: release remaining collateral back to free BTC
-    state["free_btc"] += gain_btc + net_collateral_btc
-    state["collat_btc"] = params["start_collateral_btc"]  # reset reserve
-
-    # Step 5: set next loan equal to cap for new price
-    state["loan"] = cap_next_loan(exit_price, state["collat_btc"])
-
-    # Log cycle with detailed payment strategy tracking
-    records.append({
-        "cycle": state["cycle"],
-        "entry_price": entry_price,
-        "exit_price": exit_price,
-        "cycle_duration_days": actual_days,
-        "expected_duration_days": expected_days,
-        "annualized_return_pct": ((exit_price / entry_price) ** (365 / actual_days) - 1) * 100,
-        "loan": loan,
-        "daily_interest_rate": daily_rate * 100,
-        "interest_paid": interest,
-        "total_payoff": payoff,
-        "interest_as_pct_of_loan": (interest / loan) * 100,
-        "payment_strategy": strategy_used,
-        "monthly_payment_amount": monthly_payment,
-        "deferred_interest_amount": deferred_interest if 'deferred_interest' in locals() else 0,
-        "btc_sold_monthly": collateral_impact,
-        "ltv_with_deferral": ltv_with_deferral if 'ltv_with_deferral' in locals() else 0,
-        "ltv_with_payments": ltv_with_payments if 'ltv_with_payments' in locals() else 0,
-        "needed_cure_btc": needed_btc,
-        "btc_free": state["free_btc"],
-        "btc_bought": btc_bought,
-        "btc_sold": btc_sold,
-        "net_btc_gain": gain_btc,
-        "net_collateral_btc": net_collateral_btc,
-    })
-
-    # Safety break
-    if state["cycle"] > 500:
-        print("Aborting after 500 cycles (should never happen).")
-        break
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Section 7 · Save results
-# ──────────────────────────────────────────────────────────────────────────────
-df = pd.DataFrame(records)
-df.to_csv("cycles_log.csv", index=False)
-
-plt.figure()
-plt.plot(df.cycle, df.exit_price, marker="o")
-plt.xlabel("Cycle")
-plt.ylabel("BTC Exit Price ($)")
-plt.title("BTC Price per Cycle")
-plt.savefig("btc_price_over_cycles.png", dpi=150)
-
-plt.figure()
-plt.plot(df.cycle, df.btc_free, marker="o", color="orange")
-plt.xlabel("Cycle")
-plt.ylabel("Unencumbered BTC")
-plt.title("BTC Held vs. Cycle")
-plt.savefig("btc_owned_over_cycles.png", dpi=150)
-
-# Calculate and display summary statistics
-total_interest = df['interest_paid'].sum()
-total_loans = df['loan'].sum()
-final_btc = df['btc_free'].iloc[-1]
-total_cycles = len(df)
-total_days = df['cycle_duration_days'].sum()
-avg_cycle_days = df['cycle_duration_days'].mean()
-
-# Payment strategy analysis
-deferred_cycles = len(df[df['payment_strategy'] == 'deferred'])
-monthly_payment_cycles = len(df[df['payment_strategy'] == 'monthly_payments'])
-total_deferred_interest = df[df['payment_strategy'] == 'deferred']['deferred_interest_amount'].sum()
-total_monthly_interest = df[df['payment_strategy'] == 'monthly_payments']['interest_paid'].sum()
-
-print(f"\n📊 SIMULATION SUMMARY:")
-print(f"   💰 Final BTC Holdings: {final_btc:.4f} BTC")
-print(f"   🔄 Total Cycles: {total_cycles}")
-print(f"   ⏱️  Total Time: {total_days:.0f} days ({total_days/365:.1f} years)")
-print(f"   📅 Average Cycle Duration: {avg_cycle_days:.0f} days ({avg_cycle_days/30:.1f} months)")
-print(f"   💸 Total Interest Paid: ${total_interest:,.0f}")
-print(f"   📈 Average Loan Size: ${total_loans/total_cycles:,.0f}")
-print(f"   📊 Interest as % of Total Loans: {100*total_interest/total_loans:.1f}%")
-print(f"   🎯 Average Annualized Return: {df['annualized_return_pct'].mean():.1f}%")
-print(f"\n💡 PAYMENT STRATEGY ANALYSIS:")
-print(f"   🔄 Deferred Interest Cycles: {deferred_cycles} ({100*deferred_cycles/total_cycles:.1f}%)")
-print(f"   💳 Monthly Payment Cycles: {monthly_payment_cycles} ({100*monthly_payment_cycles/total_cycles:.1f}%)")
-print(f"   📈 Total Deferred Interest: ${total_deferred_interest:,.0f}")
-print(f"   📊 Total Monthly Interest: ${total_monthly_interest:,.0f}")
-print(f"   💰 Interest Savings from Strategy: ${(total_deferred_interest + total_monthly_interest) - total_interest:,.0f}")
-
-print("\nSimulation complete.  Files saved:\n"
-      "  • cycles_log.csv\n"
-      "  • btc_price_over_cycles.png\n"
-      "  • btc_owned_over_cycles.png")
+if __name__ == "__main__":
+    main()
