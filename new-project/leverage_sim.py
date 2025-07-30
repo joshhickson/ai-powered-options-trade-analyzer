@@ -479,10 +479,10 @@ def simulate_realistic_cycle_outcome(start_price: float, loan_size: float,
         loan_balance = loan_size * (1 + 0.115 * months/12)  # Simple interest approximation
         worst_ltv = loan_balance / (collateral_btc * worst_price)
 
-        # Determine outcome with more conservative thresholds
-        if worst_ltv >= 0.80:  # Changed from 0.90 to 0.80
+        # Determine outcome using actual contract thresholds
+        if worst_ltv >= 0.90:  # Contract liquidation threshold
             outcome = "LIQUIDATION"
-        elif worst_ltv >= 0.70:  # Changed from 0.85 to 0.70
+        elif worst_ltv >= 0.85:  # Contract margin call threshold
             outcome = "MARGIN_CALL"
         elif final_price > start_price * 1.05:  # Reduced from 1.10 to 1.05
             outcome = "SUCCESSFUL_EXIT"
@@ -523,11 +523,11 @@ class LoanSimulator:
         self.origination_fee_rate = 0.033  # ~3.3% estimated
         self.processing_fee_rate = 0.02  # 2% on liquidations
 
-        # Realistic but safe LTV thresholds based on 70% max crash planning
-        self.baseline_ltv = 0.50  # Target 50% LTV under normal conditions
-        self.margin_call_ltv = 0.70  # Early warning at 70% 
-        self.liquidation_ltv = 0.80  # Forced exit at 80% (safety margin for 70% crashes)
-        self.collateral_release_ltv = 0.20
+        # Contract terms - match Figure Lending actual thresholds
+        self.baseline_ltv = 0.75  # 75% LTV baseline per contract
+        self.margin_call_ltv = 0.85  # 85% margin call trigger per contract
+        self.liquidation_ltv = 0.90  # 90% liquidation trigger per contract
+        self.collateral_release_ltv = 0.35  # 35% collateral release per contract
 
         # Operational parameters - realistic expectations
         self.cure_period_hours = 48
@@ -554,9 +554,9 @@ class LoanSimulator:
                 "recommendation": "Increase starting BTC to at least 0.15 BTC"
             }
 
-        # Conservative drawdown assumption
-        conservative_crash_price = start_price * 0.25  # 75% crash
-        max_safe_loan = max_collateral * conservative_crash_price * self.max_safe_ltv
+        # Conservative drawdown assumption - allow for 60% crash with contract terms
+        conservative_crash_price = start_price * 0.40  # 60% crash (historical worst-case)
+        max_safe_loan = max_collateral * conservative_crash_price * 0.75  # Use baseline LTV
 
         if max_safe_loan < self.min_loan:
             return {
@@ -1008,13 +1008,15 @@ def main():
     start_price = 118000.0
     btc_goal = 1.0
 
-    # Calculate initial conservative loan amount
-    initial_collateral = start_btc / 2  # Reserve half as buffer
+    # Calculate initial loan amount using contract terms
+    initial_collateral = start_btc * 0.6  # Use 60% as collateral, keep 40% as buffer
     worst_case_drop = drawdown_model(start_price)
     worst_case_price = start_price * (1 - worst_case_drop)
-    max_safe_loan = initial_collateral * worst_case_price * 0.75  # 75% LTV at worst case
-
-    initial_loan = min(max_safe_loan, 50000.0)  # Cap at reasonable amount
+    
+    # Use contract baseline LTV (75%) with safety margin for worst case
+    max_safe_loan = initial_collateral * worst_case_price * 0.70  # 70% of collateral value at crash price
+    
+    initial_loan = min(max_safe_loan, 30000.0)  # Reasonable cap
     initial_loan = max(initial_loan, simulator.min_loan)  # Ensure minimum
 
     print(f"💰 Initial loan amount: ${initial_loan:,.0f}")
@@ -1032,11 +1034,13 @@ def main():
     while free_btc < btc_goal and cycle < 50:  # Safety limit
         cycle += 1
 
-        # Determine loan size for this cycle
+        # Determine loan size for this cycle using contract terms
         worst_drop = drawdown_model(current_price)
         worst_price = current_price * (1 - worst_drop)
-        max_loan = collateral_btc * worst_price * 0.75
-        loan_amount = min(max_loan, free_btc * current_price * 0.5)  # Conservative sizing
+        
+        # Use contract baseline LTV but with safety margin for drawdowns
+        max_loan = collateral_btc * worst_price * 0.70  # 70% of collateral at worst price
+        loan_amount = min(max_loan, free_btc * current_price * 0.8)  # Less conservative sizing
         loan_amount = max(loan_amount, simulator.min_loan)
 
         # Simulate this cycle with probabilistic drawdowns
