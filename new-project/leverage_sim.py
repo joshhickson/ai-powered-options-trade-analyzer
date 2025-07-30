@@ -596,62 +596,52 @@ class LoanSimulator:
             "recommendation": f"Proceed with caution. Max safe loan: ${max_safe_loan:,.0f}"
         }
 
-    def validate_strategy_viability(self, start_btc: float, start_price: float, 
-                                  goal_btc: float) -> dict:
-        """Check if strategy is mathematically viable given constraints."""
-        starting_value = start_btc * start_price
-        goal_value = goal_btc * start_price  # Conservative: same price
-        required_gain = goal_value - starting_value
-
-        # Calculate theoretical maximum with safe leverage
-        max_collateral = start_btc - self.min_collateral_buffer
-        if max_collateral <= 0:
-            return {
-                "viable": False, 
-                "reason": "Insufficient starting capital for any collateral",
-                "recommendation": "Increase starting BTC to at least 0.15 BTC"
-            }
-
-        # Conservative drawdown assumption - allow for 60% crash with contract terms
-        conservative_crash_price = start_price * 0.40  # 60% crash (historical worst-case)
-        max_safe_loan = max_collateral * conservative_crash_price * 0.75  # Use baseline LTV
-
-        if max_safe_loan < self.min_loan:
-            return {
-                "viable": False,
-                "reason": f"Max safe loan ${max_safe_loan:,.0f} below minimum ${self.min_loan:,.0f}",
-                "recommendation": f"Need at least {self.min_loan / (conservative_crash_price * self.max_safe_ltv):.3f} BTC for viable strategy"
-            }
-
-        # Estimate cycles needed (very rough)
-        btc_per_cycle = max_safe_loan / start_price * 0.5  # Conservative 50% efficiency
-        cycles_needed = required_gain / (btc_per_cycle * start_price)
-
-        if cycles_needed > 20:
-            return {
-                "viable": False,
-                "reason": f"Would require {cycles_needed:.0f} cycles - too risky/long",
-                "recommendation": "Strategy not viable with current parameters. Consider: 1) Increase starting capital, 2) Lower goal, 3) Use DCA instead"
-            }
-
-        # Check interest cost impact over time
-        annual_interest_cost = max_safe_loan * self.base_apr
-        cycles_per_year = 365 / 180  # Assume 6 months per cycle
-        annual_cycles = min(cycles_needed, cycles_per_year)
-        interest_burden = annual_interest_cost / starting_value
-
-        if interest_burden > 0.5:  # 50% of portfolio value per year
-            return {
-                "viable": False,
-                "reason": f"Interest costs {interest_burden:.1%} of portfolio annually - unsustainable",
-                "recommendation": "Interest burden too high. Reduce leverage or increase starting capital"
-            }
-
-        return {
-            "viable": True,
-            "reason": f"Estimated {cycles_needed:.1f} cycles, {interest_burden:.1%} annual interest burden",
-            "recommendation": f"Proceed with caution. Max safe loan: ${max_safe_loan:,.0f}"
-        }
+    def suggest_viable_parameters(self, start_price: float, goal_btc: float) -> dict:
+        """Suggest viable parameter combinations when strategy fails."""
+        suggestions = []
+        
+        # Option 1: Calculate minimum BTC needed for current goal
+        min_btc_for_goal = self.min_loan / (start_price * 0.40 * self.max_safe_ltv) + self.min_collateral_buffer
+        suggestions.append({
+            "option": "Increase Starting Capital",
+            "start_btc": min_btc_for_goal,
+            "goal_btc": goal_btc,
+            "start_value": min_btc_for_goal * start_price,
+            "description": f"Need {min_btc_for_goal:.3f} BTC (${min_btc_for_goal * start_price:,.0f}) to safely reach {goal_btc} BTC goal"
+        })
+        
+        # Option 2: Lower goal to match current capital
+        for test_btc in [0.24, 0.5, 0.75]:
+            max_collateral = test_btc - self.min_collateral_buffer
+            if max_collateral > 0:
+                conservative_crash_price = start_price * 0.40
+                max_safe_loan = max_collateral * conservative_crash_price * 0.75
+                if max_safe_loan >= self.min_loan:
+                    # Estimate achievable goal
+                    btc_per_cycle = max_safe_loan / start_price * 0.3  # Conservative efficiency
+                    achievable_gain = btc_per_cycle * 10  # 10 cycles max
+                    achievable_goal = test_btc + achievable_gain
+                    
+                    suggestions.append({
+                        "option": f"Lower Goal (with {test_btc} BTC capital)",
+                        "start_btc": test_btc,
+                        "goal_btc": achievable_goal,
+                        "start_value": test_btc * start_price,
+                        "description": f"With {test_btc} BTC, realistically achieve ~{achievable_goal:.2f} BTC goal"
+                    })
+        
+        # Option 3: DCA alternative
+        monthly_dca = 1000  # $1000/month
+        months_to_goal = (goal_btc * start_price) / monthly_dca
+        suggestions.append({
+            "option": "Dollar Cost Averaging Alternative",
+            "start_btc": 0.24,
+            "goal_btc": goal_btc,
+            "start_value": 0.24 * start_price,
+            "description": f"DCA ${monthly_dca}/month would reach goal in {months_to_goal:.1f} months with less risk"
+        })
+        
+        return {"suggestions": suggestions}
 
     def model_bear_market_impact(self, start_price: float, collateral_btc: float, 
                                loan_balance: float) -> dict:
@@ -1098,6 +1088,23 @@ def main():
     if not viability_check['viable']:
         print(f"\n🛑 ABORTING SIMULATION - Strategy is not mathematically viable")
         print(f"   Please adjust parameters based on recommendations above")
+        
+        # Show viable parameter suggestions
+        suggestions = simulator.suggest_viable_parameters(start_price, btc_goal)
+        print(f"\n💡 VIABLE PARAMETER SUGGESTIONS:")
+        print("=" * 60)
+        
+        for i, suggestion in enumerate(suggestions["suggestions"], 1):
+            print(f"\n{i}. {suggestion['option']}:")
+            print(f"   Starting BTC: {suggestion['start_btc']:.3f} BTC (${suggestion['start_value']:,.0f})")
+            print(f"   Goal BTC: {suggestion['goal_btc']:.2f} BTC")
+            print(f"   Description: {suggestion['description']}")
+        
+        print(f"\n🔧 TO TEST A SUGGESTION:")
+        print(f"   1. Edit the 'Starting conditions' section in main()")
+        print(f"   2. Update start_btc and/or btc_goal values")
+        print(f"   3. Re-run the simulation")
+        
         return
 
     # Simulation state
