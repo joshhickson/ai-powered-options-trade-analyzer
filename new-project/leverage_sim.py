@@ -1058,21 +1058,17 @@ def main():
     # Initialize simulation
     simulator = LoanSimulator()
 
-    # Starting conditions - Testing viable scenario #2
-    start_btc = 0.50
+    # Starting conditions - Fixed parameters as requested
+    start_btc = 0.50  # Keep some free BTC for flexibility
     start_price = 118000.0
     btc_goal = 0.81
 
-    # Calculate initial loan amount using contract terms
-    initial_collateral = start_btc * 0.6  # Use 60% as collateral, keep 40% as buffer
-    worst_case_drop = drawdown_model(start_price)
-    worst_case_price = start_price * (1 - worst_case_drop)
+    # Fixed loan parameters as requested
+    initial_collateral = 0.12  # Fixed 0.12 BTC collateral
+    initial_loan = 10000.0     # Fixed $10,000 loan at 11.5% APR
     
-    # Use contract baseline LTV (75%) with safety margin for worst case
-    max_safe_loan = initial_collateral * worst_case_price * 0.70  # 70% of collateral value at crash price
-    
-    initial_loan = min(max_safe_loan, 30000.0)  # Reasonable cap
-    initial_loan = max(initial_loan, simulator.min_loan)  # Ensure minimum
+    # Update starting BTC to account for fixed collateral
+    start_btc = initial_collateral + 0.38  # 0.12 collateral + 0.38 free BTC
 
     print(f"💰 Initial loan amount: ${initial_loan:,.0f}")
     print(f"🪙 Initial collateral: {initial_collateral:.4f} BTC")
@@ -1118,23 +1114,19 @@ def main():
     while free_btc < btc_goal and cycle < 50:  # Safety limit
         cycle += 1
 
-        # Determine loan size for this cycle using contract terms
-        worst_drop = drawdown_model(current_price)
-        worst_price = current_price * (1 - worst_drop)
+        # Fixed loan amount as requested - always $10,000 at 11.5% APR
+        loan_amount = 10000.0
         
-        # Use more aggressive but still safe loan sizing
-        max_loan = collateral_btc * worst_price * 0.80  # 80% of collateral at worst price (up from 70%)
-        
-        # Allow larger loans if we have sufficient free BTC as backup
-        backup_value = free_btc * current_price
-        if backup_value > 20000:  # If we have substantial backup
-            max_loan = min(max_loan * 1.5, 75000)  # Increase loan size, cap at $75k
-        
-        loan_amount = max(max_loan, simulator.min_loan)
-        
-        # Safety check: don't loan more than we can reasonably handle
-        max_reasonable_loan = (collateral_btc + free_btc * 0.5) * current_price * 0.6
-        loan_amount = min(loan_amount, max_reasonable_loan)
+        # Ensure we have enough collateral for this fixed loan
+        if collateral_btc < 0.12:
+            # Add more collateral from free BTC if needed
+            needed_collateral = 0.12 - collateral_btc
+            if free_btc >= needed_collateral:
+                free_btc -= needed_collateral
+                collateral_btc = 0.12
+            else:
+                print(f"⚠️  Insufficient BTC for 0.12 collateral requirement")
+                break
 
         # Simulate this cycle with probabilistic drawdowns
         cycle_result = simulator.simulate_cycle(
@@ -1209,10 +1201,16 @@ def main():
             print(f"🎯 Goal reached! Free BTC: {free_btc:.4f}")
             break
 
-        # Prepare for next cycle - reset collateral to safe level
-        if free_btc > 0.1:  # Ensure we have enough for collateral
-            collateral_btc = min(free_btc / 2, 0.5)  # Conservative collateral management
-            free_btc -= collateral_btc
+        # Maintain fixed 0.12 BTC collateral for next cycle
+        if collateral_btc < 0.12 and free_btc > 0:
+            needed_collateral = 0.12 - collateral_btc
+            if free_btc >= needed_collateral:
+                free_btc -= needed_collateral
+                collateral_btc = 0.12
+            else:
+                # Use all remaining free BTC as collateral
+                collateral_btc += free_btc
+                free_btc = 0
 
     # Save and analyze results
     if results:
