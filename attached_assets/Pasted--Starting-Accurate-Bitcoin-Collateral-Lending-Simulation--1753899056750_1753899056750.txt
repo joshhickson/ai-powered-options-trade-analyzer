@@ -1,0 +1,62 @@
+🚀 Starting Accurate Bitcoin Collateral Lending Simulation
+============================================================
+📁 Export directory: exports/simulation_20250730_181039
+============================================================
+⚠️  nasdaq-data-link not installed
+📈 Tier 2: Trying Kraken API...
+✅ Kraken successful: 720 days
+📊 Loaded 720 days of price data
+📈 Analyzed 516 historical recovery cycles
+📊 Using data-driven drawdown model based on actual Bitcoin history
+📈 Historical data analysis:
+   • Worst observed drawdown: 26.2%
+   • 95th percentile drawdown: 22.2%
+   • Mean drawdown: 8.4%
+   • Median drawdown: 7.1%
+🎲 Data-driven model sampling from 516 historical cycles at $60,714:
+🎲 Monte Carlo Run #1: 17.3% drawdown at $60,714
+   Scenario: Historical data sample
+🎲 Monte Carlo Run #2: 3.8% drawdown at $60,714
+   Scenario: Historical data sample
+🎲 Monte Carlo Run #3: 5.7% drawdown at $60,714
+   Scenario: Historical data sample
+✅ Model will sample from actual historical distribution instead of assumptions
+💰 Initial loan amount: $11,657
+🪙 Initial collateral: 0.1440 BTC
+📉 Expected worst drawdown: 2.0%
+
+🔍 STRATEGY VIABILITY CHECK:
+   Status: ❌ NOT VIABLE
+   Reason: Max safe loan $3,186 below minimum $10,000
+   Recommendation: Need at least 0.706 BTC for viable strategy
+
+🛑 ABORTING SIMULATION - Strategy is not mathematically viable
+   Please adjust parameters based on recommendations above
+
+💡 VIABLE PARAMETER SUGGESTIONS:
+============================================================
+
+1. Increase Starting Capital:
+   Starting BTC: 0.856 BTC ($101,033)
+   Goal BTC: 1.00 BTC
+   Description: Need 0.856 BTC ($101,033) to safely reach 1.0 BTC goal
+
+2. Lower Goal (with 0.5 BTC capital):
+   Starting BTC: 0.500 BTC ($59,000)
+   Goal BTC: 0.81 BTC
+   Description: With 0.5 BTC, realistically achieve ~0.81 BTC goal
+
+3. Lower Goal (with 0.75 BTC capital):
+   Starting BTC: 0.750 BTC ($88,500)
+   Goal BTC: 1.29 BTC
+   Description: With 0.75 BTC, realistically achieve ~1.29 BTC goal
+
+4. Dollar Cost Averaging Alternative:
+   Starting BTC: 0.240 BTC ($28,320)
+   Goal BTC: 1.00 BTC
+   Description: DCA $1000/month would reach goal in 118.0 months with less risk
+
+🔧 TO TEST A SUGGESTION:
+   1. Edit the 'Starting conditions' section in main()
+   2. Update start_btc and/or btc_goal values
+   3. Re-run the simulation
