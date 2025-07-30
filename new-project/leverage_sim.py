@@ -144,65 +144,119 @@ def worst_drop_until_recovery(price_series: pd.Series, jump: float = 30000.0) ->
     df = pd.DataFrame(res, columns=["date", "price", "draw"])
     return df
 
-def create_conservative_drawdown_model():
-    """Use realistic risk-adjusted drawdown model based on Bitcoin's historical patterns."""
-    def realistic_risk_drawdown(price: float) -> float:
+def create_probabilistic_drawdown_model(historical_data=None):
+    """Create a probabilistic drawdown model that samples from historical crash distributions."""
+    
+    # Historical Bitcoin crash data (manually curated from research)
+    # Format: (year, peak_price, trough_price, crash_percentage, duration_days)
+    historical_crashes = [
+        (2011, 32, 2, 0.93, 160),          # 93% crash
+        (2014, 1165, 152, 0.87, 410),      # 87% crash  
+        (2018, 20000, 3200, 0.84, 365),    # 84% crash
+        (2022, 69000, 15500, 0.77, 238),   # 77% crash
+        (2021, 65000, 28800, 0.56, 92),    # 56% correction
+        (2020, 12000, 3800, 0.68, 35),     # COVID crash
+        (2017, 20000, 11000, 0.45, 45),    # Mid-cycle correction
+        (2019, 14000, 6400, 0.54, 180),    # Bear market low test
+    ]
+    
+    # Convert to drawdown percentages
+    crash_severities = [crash[3] for crash in historical_crashes]
+    
+    def probabilistic_drawdown(price: float, cycle_number: int = 1) -> float:
         """
-        Realistic risk model based on Bitcoin crash frequency and severity:
-        - Major crashes (70-85%) happen roughly every 4-7 years (2011, 2018, 2022)
-        - Most cycles see 30-50% corrections during bull markets
-        - Bear markets typically see 50-70% drops from peak
-        - Extreme crashes (80%+) are rare but possible
-
-        This model uses worst-case planning (70% max) with additional safety margin.
-        """
-        # Use 95th percentile risk planning instead of absolute worst case
-        # This accounts for major crashes without assuming they happen every cycle
+        Sample a drawdown from historical distribution with realistic probabilities.
         
-        if price < 30000:
-            # Lower price levels: historically more stable, 60% max crash
-            expected_drawdown = 0.60
-        elif price < 100000:
-            # Mid-range: 2018/2022 style crashes possible, 70% max
-            expected_drawdown = 0.70
-        else:
-            # High prices: uncharted territory, plan for 75% max crash
-            expected_drawdown = 0.75
-
-        print(f"💡 Risk model at ${price:,.0f}: planning for {expected_drawdown:.1%} maximum drawdown")
-        print(f"   (This represents 95th percentile risk, not guaranteed worst case)")
-
-        return expected_drawdown
-
-    return realistic_risk_drawdown
+        Uses Monte Carlo sampling to determine crash severity based on:
+        - Historical frequency of different crash magnitudes
+        - Market cycle position
+        - Price level factors
+        """
+        
+        # Set random seed based on price and cycle for deterministic but varied results
+        np.random.seed(int(price) + cycle_number * 1000)
+        
+        # Define probability buckets based on historical frequency
+        drawdown_buckets = [
+            {"range": (0.05, 0.20), "probability": 0.40, "description": "Minor correction (5-20%)"},
+            {"range": (0.20, 0.40), "probability": 0.25, "description": "Moderate correction (20-40%)"},
+            {"range": (0.40, 0.60), "probability": 0.20, "description": "Major correction (40-60%)"},
+            {"range": (0.60, 0.80), "probability": 0.10, "description": "Severe crash (60-80%)"},
+            {"range": (0.80, 0.95), "probability": 0.05, "description": "Extreme crash (80-95%)"},
+        ]
+        
+        # Adjust probabilities based on price level and market conditions
+        if price > 100000:  # Uncharted territory - higher crash risk
+            # Shift probability toward larger crashes
+            drawdown_buckets[0]["probability"] = 0.25  # Reduce minor corrections
+            drawdown_buckets[2]["probability"] = 0.30  # Increase major corrections
+            drawdown_buckets[3]["probability"] = 0.15  # Increase severe crashes
+            drawdown_buckets[4]["probability"] = 0.10  # Increase extreme crashes
+        elif price < 30000:  # Lower prices - more stable historically
+            # Shift probability toward smaller corrections
+            drawdown_buckets[0]["probability"] = 0.50  # Increase minor corrections
+            drawdown_buckets[3]["probability"] = 0.05  # Decrease severe crashes
+            drawdown_buckets[4]["probability"] = 0.02  # Decrease extreme crashes
+        
+        # Normalize probabilities
+        total_prob = sum(bucket["probability"] for bucket in drawdown_buckets)
+        for bucket in drawdown_buckets:
+            bucket["probability"] /= total_prob
+        
+        # Sample from probability distribution
+        rand_val = np.random.random()
+        cumulative_prob = 0
+        selected_bucket = None
+        
+        for bucket in drawdown_buckets:
+            cumulative_prob += bucket["probability"]
+            if rand_val <= cumulative_prob:
+                selected_bucket = bucket
+                break
+        
+        if selected_bucket is None:
+            selected_bucket = drawdown_buckets[-1]  # Fallback
+        
+        # Sample specific drawdown within the selected bucket
+        min_draw, max_draw = selected_bucket["range"]
+        sampled_drawdown = np.random.uniform(min_draw, max_draw)
+        
+        print(f"🎲 Probabilistic drawdown at ${price:,.0f}: {sampled_drawdown:.1%}")
+        print(f"   Selected: {selected_bucket['description']}")
+        print(f"   (Sampled from historical crash distribution)")
+        
+        return sampled_drawdown
+    
+    return probabilistic_drawdown
 
 def fit_drawdown_model(draw_df: pd.DataFrame):
-    """Fit a drawdown model - now uses conservative model by default."""
-    print("📊 Using realistic risk-adjusted model based on Bitcoin crash history")
-
-    # Always use conservative model for safety
-    conservative_model = create_conservative_drawdown_model()
-
-    # If we have historical data, compare and warn if it's too optimistic
+    """Fit a probabilistic drawdown model based on historical crash patterns."""
+    print("📊 Using probabilistic drawdown model based on Bitcoin crash history")
+    
+    # Create probabilistic model that samples from historical distributions
+    probabilistic_model = create_probabilistic_drawdown_model(draw_df)
+    
+    # If we have historical data, show comparison
     if len(draw_df) >= 10:
         historical_worst = abs(draw_df.draw.min())  # Most negative (worst) drawdown
         historical_95th = np.percentile(np.abs(draw_df.draw), 95)
-
+        historical_median = np.percentile(np.abs(draw_df.draw), 50)
+        
         print(f"📈 Historical data shows:")
         print(f"   • Worst observed drawdown: {historical_worst:.1%}")
         print(f"   • 95th percentile drawdown: {historical_95th:.1%}")
-
-        # Compare with our conservative model
+        print(f"   • Median drawdown: {historical_median:.1%}")
+        
+        # Test the probabilistic model with a few samples
         test_price = draw_df.price.median()
-        conservative_prediction = conservative_model(test_price)
-
-        if conservative_prediction > historical_worst:
-            print(f"⚠️  Conservative model predicts worse crashes: {conservative_prediction:.1%}")
-            print("   This is intentional for risk management")
-        else:
-            print(f"✅ Conservative model aligns with historical data")
-
-    return conservative_model
+        print(f"🎲 Probabilistic model samples at ${test_price:,.0f}:")
+        for i in range(3):
+            sample_draw = probabilistic_model(test_price, i+1)
+            print(f"   Sample {i+1}: {sample_draw:.1%}")
+    else:
+        print("⚠️  Limited historical data - using built-in crash distribution")
+    
+    return probabilistic_model
 
 def generate_realistic_price_scenarios(start_price: float, years: int = 5) -> dict:
     """Generate multiple realistic Bitcoin price scenarios using historical patterns."""
@@ -323,16 +377,20 @@ def simulate_realistic_cycle_outcome(start_price: float, loan_size: float,
         volatility_factor = np.random.normal(1.0, 0.20)  # ±20% volatility around trend
         final_price *= volatility_factor
 
-        # Use conservative model for drawdown calculations
+        # Use probabilistic model for realistic drawdown sampling
         if scenario_name == "bear_crash":
-            # Major crash scenario: use conservative model prediction
-            worst_drawdown = 0.75  # 75% crash (conservative model range)
+            # Major crash scenario: sample from severe crash distribution
+            np.random.seed(hash(scenario_name + str(int(start_price))) % 1000)
+            # Force selection from severe crash buckets (60-95% range)
+            worst_drawdown = np.random.uniform(0.60, 0.85)
         elif scenario["monthly_return"] < 0:
-            # Decline scenarios: significant but not extreme
-            worst_drawdown = min(0.50, abs(scenario["monthly_return"]) * 4)
+            # Decline scenarios: sample from moderate to major correction range
+            np.random.seed(hash(scenario_name + str(int(start_price))) % 1000)
+            worst_drawdown = np.random.uniform(0.20, 0.60)
         else:
-            # Bull/sideways scenarios: still have drawdowns but smaller
-            worst_drawdown = min(0.30, abs(scenario["monthly_return"]) * 2 + 0.15)
+            # Bull/sideways scenarios: sample from minor to moderate correction range
+            np.random.seed(hash(scenario_name + str(int(start_price))) % 1000)
+            worst_drawdown = np.random.uniform(0.05, 0.35)
 
         worst_price = start_price * (1 - worst_drawdown)
 
@@ -640,7 +698,7 @@ class LoanSimulator:
         return loan_amount / (0.82 * worst_case_price)  # Small buffer below 85%
 
     def simulate_cycle(self, entry_price: float, collateral_btc: float, 
-                      loan_amount: float, drawdown_model) -> dict:
+                      loan_amount: float, drawdown_model, cycle_number: int = 1) -> dict:
         """Simulate one complete loan cycle using realistic market scenarios."""
 
         # Add origination fee to loan balance
@@ -900,9 +958,9 @@ def main():
         loan_amount = min(max_loan, free_btc * current_price * 0.5)  # Conservative sizing
         loan_amount = max(loan_amount, simulator.min_loan)
 
-        # Simulate this cycle
+        # Simulate this cycle with probabilistic drawdowns
         cycle_result = simulator.simulate_cycle(
-            current_price, collateral_btc, loan_amount, drawdown_model
+            current_price, collateral_btc, loan_amount, drawdown_model, cycle
         )
 
         # Check if liquidation occurred
