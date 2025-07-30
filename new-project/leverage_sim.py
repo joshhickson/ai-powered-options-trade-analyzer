@@ -144,78 +144,152 @@ def worst_drop_until_recovery(price_series: pd.Series, jump: float = 30000.0) ->
     df = pd.DataFrame(res, columns=["date", "price", "draw"])
     return df
 
+def create_conservative_drawdown_model():
+    """Use conservative drawdown estimates based on Bitcoin's full crash history."""
+    def conservative_drawdown(price: float) -> float:
+        """
+        Conservative model based on actual Bitcoin crashes:
+        - 2018: -84% peak to trough (ATH $20k → $3.2k)
+        - 2022: -77% peak to trough (ATH $69k → $15.5k)  
+        - 2011: -93% peak to trough (ATH $32 → $2)
+        - Multiple 50-70% crashes throughout history
+        """
+        # Base conservative expectation: 70% drawdown minimum
+        base_drawdown = 0.70
+        
+        # Higher prices may see larger percentage drops due to:
+        # - More institutional money that can exit quickly
+        # - Higher leverage in system
+        # - Regulatory risks at higher market caps
+        price_factor = min(1.2, max(0.8, price / 50000))
+        
+        # Calculate expected worst-case drawdown
+        expected_drawdown = min(0.85, base_drawdown * price_factor)
+        
+        return expected_drawdown
+    
+    return conservative_drawdown
+
 def fit_drawdown_model(draw_df: pd.DataFrame):
-    """Fit a drawdown model from historical data."""
-    if len(draw_df) < 10:
-        print("⚠️  Insufficient data for drawdown model, using default")
-        return lambda price: max(0.15, min(0.80, 0.5 * (price / 50000) ** (-0.2)))
-
-    # Simple percentile-based model by price ranges
-    min_price = draw_df.price.min()
-    max_price = draw_df.price.max()
-
-    # Create price bins
-    n_bins = min(20, max(5, len(draw_df) // 10))
-    bins = np.linspace(min_price, max_price, n_bins)
-
-    draw_df["bin"] = pd.cut(draw_df.price, bins=bins)
-
-    bin_stats = draw_df.groupby("bin", observed=False).agg(
-        p=("price", "median"),
-        d95=("draw", lambda x: np.percentile(np.abs(x), 95) if len(x) > 0 else 0.3),
-        count=("draw", "count")
-    ).dropna()
-
-    # Filter bins with sufficient data
-    bin_stats = bin_stats[bin_stats['count'] >= 2]
-
-    if len(bin_stats) < 3:
-        return lambda price: max(0.15, min(0.80, 0.4 * (price / 50000) ** (-0.15)))
-
-    # Simple interpolation model
-    prices = bin_stats.p.values
-    drawdowns = bin_stats.d95.values
-
-    def drawdown_model(price: float) -> float:
-        if price <= prices.min():
-            return drawdowns[0]
-        elif price >= prices.max():
-            return drawdowns[-1]
+    """Fit a drawdown model - now uses conservative model by default."""
+    print("📊 Using conservative drawdown model based on Bitcoin crash history")
+    
+    # Always use conservative model for safety
+    conservative_model = create_conservative_drawdown_model()
+    
+    # If we have historical data, compare and warn if it's too optimistic
+    if len(draw_df) >= 10:
+        historical_worst = abs(draw_df.draw.min())  # Most negative (worst) drawdown
+        historical_95th = np.percentile(np.abs(draw_df.draw), 95)
+        
+        print(f"📈 Historical data shows:")
+        print(f"   • Worst observed drawdown: {historical_worst:.1%}")
+        print(f"   • 95th percentile drawdown: {historical_95th:.1%}")
+        
+        # Compare with our conservative model
+        test_price = draw_df.price.median()
+        conservative_prediction = conservative_model(test_price)
+        
+        if conservative_prediction > historical_worst:
+            print(f"⚠️  Conservative model predicts worse crashes: {conservative_prediction:.1%}")
+            print("   This is intentional for risk management")
         else:
-            # Linear interpolation
-            idx = np.searchsorted(prices, price)
-            if idx == 0:
-                return drawdowns[0]
-            elif idx >= len(prices):
-                return drawdowns[-1]
-            else:
-                weight = (price - prices[idx-1]) / (prices[idx] - prices[idx-1])
-                return drawdowns[idx-1] * (1 - weight) + drawdowns[idx] * weight
+            print(f"✅ Conservative model aligns with historical data")
+    
+    return conservative_model
 
-    return drawdown_model
+def generate_realistic_price_scenarios(start_price: float, years: int = 5) -> dict:
+    """Generate multiple realistic Bitcoin price scenarios using historical patterns."""
+    scenarios = {}
+    
+    # Historical Bitcoin volatility and patterns
+    annual_volatility = 0.80  # 80% annual volatility
+    daily_volatility = annual_volatility / np.sqrt(365)
+    
+    np.random.seed(42)  # Reproducible results
+    days = years * 365
+    
+    # Bull scenario: 100-200% annual gains (rare, only 20% probability)
+    bull_drift = np.log(2.0) / 365  # 100% annual
+    bull_returns = np.random.normal(bull_drift, daily_volatility, days)
+    bull_prices = start_price * np.exp(np.cumsum(bull_returns))
+    scenarios['bull'] = bull_prices
+    
+    # Bear scenario: -50% to -80% drops lasting 1-3 years (30% probability)
+    bear_crash_months = 12
+    bear_recovery_months = 24
+    crash_days = bear_crash_months * 30
+    recovery_days = bear_recovery_months * 30
+    
+    # Crash phase: -70% over 12 months
+    crash_drift = np.log(0.3) / crash_days
+    crash_returns = np.random.normal(crash_drift, daily_volatility, crash_days)
+    crash_prices = start_price * np.exp(np.cumsum(crash_returns))
+    
+    # Recovery phase: slow recovery to 50% of original
+    recovery_target = start_price * 0.5
+    recovery_drift = np.log(recovery_target / crash_prices[-1]) / recovery_days
+    recovery_returns = np.random.normal(recovery_drift, daily_volatility * 0.5, recovery_days)
+    recovery_prices = crash_prices[-1] * np.exp(np.cumsum(recovery_returns))
+    
+    bear_prices = np.concatenate([crash_prices, recovery_prices])
+    if len(bear_prices) < days:
+        # Extend with sideways movement
+        remaining_days = days - len(bear_prices)
+        sideways_returns = np.random.normal(0, daily_volatility * 0.3, remaining_days)
+        sideways_prices = bear_prices[-1] * np.exp(np.cumsum(sideways_returns))
+        bear_prices = np.concatenate([bear_prices, sideways_prices])
+    
+    scenarios['bear'] = bear_prices[:days]
+    
+    # Realistic scenario: 20-30% annual average with high volatility (40% probability)
+    realistic_drift = np.log(1.25) / 365  # 25% annual
+    realistic_returns = np.random.normal(realistic_drift, daily_volatility, days)
+    realistic_prices = start_price * np.exp(np.cumsum(realistic_returns))
+    scenarios['realistic'] = realistic_prices
+    
+    # Crash scenario: Sudden 60% drop with slow recovery (10% probability)
+    crash_day = days // 4  # Crash happens 1/4 through period
+    pre_crash_drift = np.log(1.5) / crash_day  # 50% gain before crash
+    pre_crash_returns = np.random.normal(pre_crash_drift, daily_volatility, crash_day)
+    pre_crash_prices = start_price * np.exp(np.cumsum(pre_crash_returns))
+    
+    # Sudden crash
+    crash_price = pre_crash_prices[-1] * 0.4  # -60% crash
+    
+    # Slow recovery
+    remaining_days = days - crash_day - 1
+    recovery_drift = np.log(start_price * 0.8 / crash_price) / remaining_days
+    post_crash_returns = np.random.normal(recovery_drift, daily_volatility * 0.6, remaining_days)
+    post_crash_prices = crash_price * np.exp(np.cumsum(post_crash_returns))
+    
+    crash_prices = np.concatenate([pre_crash_prices, [crash_price], post_crash_prices])
+    scenarios['crash'] = crash_prices[:days]
+    
+    return scenarios
 
 def simulate_price_path(start_price: float, target_price: float, days: int) -> np.ndarray:
-    """Generate realistic price path using geometric Brownian motion."""
+    """Generate realistic price path - DEPRECATED, use generate_realistic_price_scenarios."""
+    # Keep for backward compatibility but add warning
+    print("⚠️  WARNING: Using deprecated optimistic price model")
     if days <= 1:
         return np.array([start_price, target_price])
 
-    # Calculate drift to reach target
+    # More conservative path generation
     total_return = np.log(target_price / start_price)
     drift = total_return / days
 
-    # Generate path
+    # Higher volatility to reflect reality
     np.random.seed(42)
     dt = 1.0
-    volatility = 0.045  # 4.5% daily volatility
+    volatility = 0.065  # Increased from 4.5% to 6.5% daily
     random_shocks = np.random.normal(0, volatility * np.sqrt(dt), days - 1)
 
     log_returns = drift + random_shocks
     log_prices = np.log(start_price) + np.cumsum(np.concatenate([[0], log_returns]))
     prices = np.exp(log_prices)
 
-    # Ensure we end at target
-    prices[-1] = target_price
-
+    # Don't force target price - let it be more realistic
     return prices
 
 class LoanSimulator:
@@ -226,15 +300,140 @@ class LoanSimulator:
         self.origination_fee_rate = 0.033  # ~3.3% estimated
         self.processing_fee_rate = 0.02  # 2% on liquidations
 
-        # LTV thresholds
-        self.baseline_ltv = 0.75
-        self.margin_call_ltv = 0.85
-        self.liquidation_ltv = 0.90
-        self.collateral_release_ltv = 0.35
+        # Conservative LTV thresholds for better risk management
+        self.baseline_ltv = 0.40  # Much more conservative
+        self.margin_call_ltv = 0.70  # Earlier warning
+        self.liquidation_ltv = 0.85  # Earlier forced exit
+        self.collateral_release_ltv = 0.25
 
-        # Operational parameters
+        # Operational parameters - more realistic
         self.cure_period_hours = 48
-        self.exit_jump = 30000.0
+        self.exit_jump = 15000.0  # Reduced from $30k to $15k (more realistic)
+        
+        # Risk management parameters
+        self.max_safe_ltv = 0.40  # Never exceed 40% LTV
+        self.min_collateral_buffer = 0.10  # Always keep 0.1 BTC buffer
+        
+    def validate_strategy_viability(self, start_btc: float, start_price: float, 
+                                  goal_btc: float) -> dict:
+        """Check if strategy is mathematically viable given constraints."""
+        starting_value = start_btc * start_price
+        goal_value = goal_btc * start_price  # Conservative: same price
+        required_gain = goal_value - starting_value
+        
+        # Calculate theoretical maximum with safe leverage
+        max_collateral = start_btc - self.min_collateral_buffer
+        if max_collateral <= 0:
+            return {
+                "viable": False, 
+                "reason": "Insufficient starting capital for any collateral",
+                "recommendation": "Increase starting BTC to at least 0.15 BTC"
+            }
+        
+        # Conservative drawdown assumption
+        conservative_crash_price = start_price * 0.25  # 75% crash
+        max_safe_loan = max_collateral * conservative_crash_price * self.max_safe_ltv
+        
+        if max_safe_loan < self.min_loan:
+            return {
+                "viable": False,
+                "reason": f"Max safe loan ${max_safe_loan:,.0f} below minimum ${self.min_loan:,.0f}",
+                "recommendation": f"Need at least {self.min_loan / (conservative_crash_price * self.max_safe_ltv):.3f} BTC for viable strategy"
+            }
+        
+        # Estimate cycles needed (very rough)
+        btc_per_cycle = max_safe_loan / start_price * 0.5  # Conservative 50% efficiency
+        cycles_needed = required_gain / (btc_per_cycle * start_price)
+        
+        if cycles_needed > 20:
+            return {
+                "viable": False,
+                "reason": f"Would require {cycles_needed:.0f} cycles - too risky/long",
+                "recommendation": "Strategy not viable with current parameters. Consider: 1) Increase starting capital, 2) Lower goal, 3) Use DCA instead"
+            }
+        
+        # Check interest cost impact over time
+        annual_interest_cost = max_safe_loan * self.base_apr
+        cycles_per_year = 365 / 180  # Assume 6 months per cycle
+        annual_cycles = min(cycles_needed, cycles_per_year)
+        interest_burden = annual_interest_cost / starting_value
+        
+        if interest_burden > 0.5:  # 50% of portfolio value per year
+            return {
+                "viable": False,
+                "reason": f"Interest costs {interest_burden:.1%} of portfolio annually - unsustainable",
+                "recommendation": "Interest burden too high. Reduce leverage or increase starting capital"
+            }
+        
+        return {
+            "viable": True,
+            "reason": f"Estimated {cycles_needed:.1f} cycles, {interest_burden:.1%} annual interest burden",
+            "recommendation": f"Proceed with caution. Max safe loan: ${max_safe_loan:,.0f}"
+        }
+    
+    def model_bear_market_impact(self, start_price: float, collateral_btc: float, 
+                               loan_balance: float) -> dict:
+        """Model what happens during 18-month bear market."""
+        print("🐻 Modeling bear market survival...")
+        
+        # Typical Bitcoin bear market: 70% drop over 12 months, 6 months sideways
+        bear_months = 18
+        crash_months = 12
+        sideways_months = 6
+        
+        # Generate bear market price path
+        prices = []
+        current_price = start_price
+        
+        # Crash phase: -70% over 12 months
+        for month in range(crash_months):
+            drop_factor = 1 - (0.70 * (month + 1) / crash_months)
+            current_price = start_price * drop_factor
+            prices.append(current_price)
+        
+        # Sideways phase: ±10% around bottom
+        bottom_price = current_price
+        for month in range(sideways_months):
+            volatility = np.random.normal(0, 0.1)  # 10% monthly volatility
+            current_price = bottom_price * (1 + volatility)
+            prices.append(current_price)
+        
+        # Check survival during bear market
+        max_ltv = 0
+        liquidation_month = None
+        monthly_interest = loan_balance * self.base_apr / 12
+        
+        remaining_collateral = collateral_btc
+        
+        for month, price in enumerate(prices):
+            # Account for monthly interest payments (sell BTC)
+            btc_sold_for_interest = monthly_interest / price
+            remaining_collateral -= btc_sold_for_interest
+            
+            if remaining_collateral <= 0:
+                return {
+                    "survives": False, 
+                    "liquidation_month": month + 1,
+                    "reason": "Ran out of collateral paying interest"
+                }
+            
+            # Check LTV
+            ltv = loan_balance / (remaining_collateral * price)
+            max_ltv = max(max_ltv, ltv)
+            
+            if ltv >= self.liquidation_ltv:
+                return {
+                    "survives": False, 
+                    "liquidation_month": month + 1,
+                    "reason": f"LTV reached {ltv:.1%} at price ${price:,.0f}"
+                }
+        
+        return {
+            "survives": True, 
+            "max_ltv": max_ltv,
+            "final_collateral": remaining_collateral,
+            "collateral_lost_to_interest": collateral_btc - remaining_collateral
+        }
 
     def calculate_monthly_payment(self, principal: float) -> float:
         """Calculate monthly interest-only payment."""
@@ -262,11 +461,32 @@ class LoanSimulator:
         else:
             return "NORMAL"
 
+    def calculate_safe_loan_sizing(self, collateral_btc: float, btc_price: float, 
+                                  conservative_drawdown: float) -> float:
+        """Calculate loan size that survives 80% Bitcoin crash with safety margin."""
+        # Assume Bitcoin drops by the conservative drawdown amount
+        crash_price = btc_price * (1 - conservative_drawdown)
+        
+        # Calculate max loan that keeps LTV < 85% even in crash (not 90%!)
+        max_safe_loan = collateral_btc * crash_price * 0.80  # 80% LTV at crash price
+        
+        # Additional safety buffer - use only 70% of theoretical max
+        recommended_loan = max_safe_loan * 0.70
+        
+        # Ensure minimum loan requirement is met, but warn if risky
+        if recommended_loan < self.min_loan:
+            print(f"⚠️  WARNING: Safe loan size ${recommended_loan:,.0f} below minimum ${self.min_loan:,.0f}")
+            print(f"   Collateral may be insufficient for safe leverage strategy")
+            return self.min_loan
+        
+        return recommended_loan
+
     def calculate_required_collateral(self, loan_amount: float, btc_price: float, 
                                     worst_case_price: float) -> float:
         """Calculate BTC needed to avoid liquidation in worst case."""
-        # Need enough collateral so that at worst_case_price, LTV < 90%
-        return loan_amount / (0.89 * worst_case_price)  # Small buffer below 90%
+        # Need enough collateral so that at worst_case_price, LTV < 85% (not 90%!)
+        # Using 85% as trigger instead of 90% for additional safety
+        return loan_amount / (0.82 * worst_case_price)  # Small buffer below 85%
 
     def simulate_cycle(self, entry_price: float, collateral_btc: float, 
                       loan_amount: float, drawdown_model) -> dict:
