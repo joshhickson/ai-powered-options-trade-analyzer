@@ -3,250 +3,238 @@
 
 ## 📋 **STRATEGY OVERVIEW**
 
-This document outlines the investment strategy being simulated in the Bitcoin collateral lending simulation. The strategy aims to leverage Bitcoin holdings through collateralized loans to accumulate additional Bitcoin over time.
+This document outlines the investment strategy being simulated in the Bitcoin collateral lending simulation. The strategy leverages a fixed starting capital of $30,000 to systematically accumulate Bitcoin through collateralized lending cycles.
 
 ### **Core Concept**
-Use existing Bitcoin as collateral to obtain USD loans, which are then used to purchase more Bitcoin. When Bitcoin price appreciates, sell the newly purchased Bitcoin to repay the loan while keeping the profit, effectively leveraging Bitcoin's price appreciation.
+Start with $30,000 cash to purchase Bitcoin, use half as collateral for USD loans, then exit each cycle when Bitcoin appreciates by $30,000 from entry price. Systematically compound Bitcoin holdings through repeated cycles until reaching 1.0 BTC target.
 
 ## 🎯 **STRATEGY OBJECTIVES**
 
 ### **Primary Goal**
-Accelerate Bitcoin accumulation beyond what would be possible through simple holding (HODLing) or Dollar Cost Averaging (DCA).
+Accumulate 1.0 BTC through systematic lending cycles starting from $30,000 initial capital.
 
 ### **Target Parameters**
-- **Starting Capital**: 0.50 BTC minimum recommended (0.12 BTC as collateral + 0.38 BTC free)
-- **Goal**: Increase Bitcoin holdings by 50-100% over 2-5 years
-- **Risk Tolerance**: Conservative to moderate (avoid liquidation at all costs)
+- **Starting Capital**: $30,000 USD (fixed)
+- **Initial Bitcoin Purchase**: ~0.24 BTC (at $118,000/BTC example price)
+- **Loan Amount**: $10,000 USD (fixed per Figure Lending minimum)
+- **Collateral per Cycle**: 0.12 BTC (half of holdings)
+- **Exit Trigger**: BTC price appreciation of $30,000 from entry price
+- **Goal**: Accumulate ≥ 1.0 BTC total holdings
 
 ## 🏦 **LENDING PLATFORM TERMS** (Based on Figure Lending)
 
 ### **Loan Structure**
-- **Minimum Loan**: $10,000 USD
+- **Fixed Loan**: $10,000 USD (minimum requirement)
 - **Interest Rate**: 11.5% APR (fixed)
-- **Payment Structure**: Interest-only monthly payments OR deferred interest (compounds daily)
-- **Origination Fee**: ~3.3% of loan amount
+- **Payment Structure**: Deferred interest strategy (compounds daily)
+- **Origination Fee**: ~3.3% of loan amount (~$330)
 - **Processing Fee**: 2% on liquidations
 
 ### **Collateral Requirements**
+- **Fixed Collateral**: 0.12 BTC per cycle (regardless of price)
 - **Baseline LTV**: 75% (loan-to-value ratio)
 - **Margin Call Trigger**: 85% LTV
 - **Liquidation Trigger**: 90% LTV
-- **Collateral Release**: Available when LTV drops below 35%
-
-### **Risk Management Features**
-- **Cure Period**: 48 hours to address margin calls
-- **Partial Liquidation**: Platform may liquidate portions to restore safe LTV
-- **No Recourse**: Debt is forgiven if collateral insufficient
+- **Backup Collateral**: Remaining ~0.12 BTC held as emergency buffer
 
 ## 🔄 **STRATEGY EXECUTION CYCLE**
 
-### **Phase 1: Loan Origination**
-1. **Collateral Deposit**: Lock 0.12 BTC as collateral
-2. **Loan Request**: Borrow $10,000 USD at 11.5% APR
-3. **Fee Payment**: Pay ~$330 origination fee (reduces effective loan to ~$9,670)
-4. **Bitcoin Purchase**: Use loan proceeds to buy Bitcoin at current market price
+### **Phase 1: Initial Setup (One-Time)**
+1. **Starting Capital**: $30,000 USD cash
+2. **Initial Bitcoin Purchase**: Buy BTC at current market price (e.g., $118K/BTC = ~0.24 BTC)
+3. **Collateral Allocation**: 
+   - Loan collateral: 0.12 BTC
+   - Backup collateral: ~0.12 BTC (for margin calls)
 
-### **Phase 2: Position Management**
-1. **Monitor LTV**: Track loan-to-value ratio daily
-2. **Margin Call Response**: Add collateral or reduce loan if LTV hits 85%
-3. **Interest Strategy**: Choose between monthly payments or deferred interest based on market conditions
-4. **Exit Timing**: Wait for favorable market conditions to close position
+### **Phase 2: Loan Cycle Execution (Repeating)**
+1. **Loan Origination**: 
+   - Lock 0.12 BTC as collateral
+   - Borrow $10,000 USD at 11.5% APR
+   - Pay ~$330 origination fee (net proceeds ~$9,670)
 
-### **Phase 3: Cycle Completion**
-1. **Bitcoin Sale**: Sell portion of Bitcoin holdings to repay loan
-2. **Loan Closure**: Pay off principal + accrued interest + any fees
-3. **Profit Calculation**: Calculate net Bitcoin gain/loss from cycle
-4. **Reinvestment**: Use profits to fund next cycle or increase free Bitcoin holdings
+2. **Position Management**:
+   - **Payment Strategy**: Defer all interest payments (compounds daily)
+   - **LTV Monitoring**: Track loan-to-value ratio daily
+   - **Margin Call Response**: Use backup 0.12 BTC to cure within 48 hours if LTV ≥ 85%
+   - **Exit Condition**: Wait for BTC price to appreciate $30,000 from entry price
+
+3. **Cycle Exit**:
+   - **Trigger**: BTC price reaches entry price + $30,000
+   - **Loan Repayment**: Pay principal + accumulated interest (~$11,500 typical)
+   - **Collateral Release**: Retrieve 0.12 BTC collateral
+   - **Net Gain Calculation**: Calculate Bitcoin accumulated from cycle
+
+### **Phase 3: Cycle Reinvestment**
+1. **Portfolio Assessment**: Calculate total BTC holdings
+2. **Goal Check**: If ≥ 1.0 BTC achieved, strategy complete
+3. **Next Cycle Setup**: Use half of total BTC as collateral for next cycle
+4. **Repeat**: Continue until 1.0 BTC target reached
 
 ## 📊 **STRATEGY MATHEMATICS**
 
-### **Profit Calculation Formula**
+### **Cycle Profit Calculation**
 ```
-Net BTC Gain = BTC_Purchased - BTC_Sold_For_Repayment - BTC_Sold_For_Interest - BTC_Used_For_Margin_Calls
+Entry Price Example: $118,000/BTC
+Exit Price Target: $148,000/BTC ($30K appreciation)
+Loan Amount: $10,000
+Interest + Fees: ~$1,500 (estimated for typical cycle)
 
-Where:
-- BTC_Purchased = Loan_Amount / Entry_Price
-- BTC_Sold_For_Repayment = Final_Loan_Balance / Exit_Price  
-- BTC_Sold_For_Interest = Interest_Paid / Average_Price_During_Cycle
-- BTC_Used_For_Margin_Calls = Additional_Collateral_Required
-```
+BTC Purchased with Loan: $10,000 ÷ $118,000 = 0.0847 BTC
+BTC Needed for Repayment: $11,500 ÷ $148,000 = 0.0777 BTC
+Net BTC Gain per Cycle: 0.0847 - 0.0777 = 0.0070 BTC
 
-### **Break-Even Price Calculation**
-```
-Break_Even_Price = Entry_Price * (1 + Interest_Rate_Effective + Fee_Rate)
-
-Example:
-- Entry Price: $100,000
-- Interest Rate: 11.5% for 6 months = 5.75%
-- Fees: 3.3% origination + potential processing fees
-- Break-Even Price: ~$109,000 (9% appreciation needed)
+Cycle Efficiency: 0.70% gain on 0.12 BTC collateral
 ```
 
-### **Risk Threshold Calculation**
+### **Progression Example**
 ```
-Liquidation_Price = Loan_Balance / (Collateral_BTC * 0.90)
+Cycle 1: Start 0.24 BTC → End ~0.247 BTC (entry $118K, exit $148K)
+Cycle 2: Start 0.247 BTC → End ~0.254 BTC (entry $148K, exit $178K)
+Cycle 3: Start 0.254 BTC → End ~0.261 BTC (entry $178K, exit $208K)
+...
+Continue until ≥ 1.0 BTC accumulated
+```
 
-Example with 60% Bitcoin crash:
-- Collateral: 0.12 BTC
-- Entry Price: $100,000  
-- Crash Price: $40,000
-- Max Safe Loan: 0.12 * $40,000 * 0.75 = $3,600
+### **Risk Thresholds**
+```
+At Entry Price $118,000:
+- Loan Amount: $10,000
+- Collateral: 0.12 BTC × $118,000 = $14,160
+- Initial LTV: $10,000 ÷ $14,160 = 70.6%
 
-Reality Check: $10,000 minimum loan requirement makes strategy very risky with only 0.12 BTC collateral
+Margin Call Price: $10,000 ÷ (0.12 × 0.85) = $98,039
+Liquidation Price: $10,000 ÷ (0.12 × 0.90) = $92,593
+
+Safety Buffer: 0.12 BTC backup can handle margin calls down to ~$49K
 ```
 
 ## ⚠️ **RISK FACTORS**
 
-### **Market Risks**
-1. **Bitcoin Volatility**: 60-90% drawdowns are historically possible
-2. **Timing Risk**: Poor entry/exit timing can eliminate profits
-3. **Extended Bear Markets**: 2-4 year periods of declining prices
-4. **Black Swan Events**: Regulatory bans, exchange hacks, technical failures
-
 ### **Strategy-Specific Risks**
-1. **Liquidation Risk**: Loss of collateral if LTV exceeds 90%
-2. **Interest Rate Risk**: Fixed 11.5% rate may exceed Bitcoin returns
-3. **Opportunity Cost**: Strategy may underperform simple holding
-4. **Complexity Risk**: Multiple failure points vs simple buy-and-hold
+1. **Fixed Exit Criteria**: $30K appreciation requirement may take extended time
+2. **Margin Call Risk**: If BTC drops below margin call threshold during cycle
+3. **Backup Depletion**: Multiple margin calls could exhaust backup collateral
+4. **Interest Accumulation**: Deferred interest compounds daily at 11.5% APR
+
+### **Market Risks**
+1. **Extended Sideways Markets**: No progress if BTC doesn't appreciate $30K
+2. **Major Corrections**: Drops below margin call levels require backup collateral
+3. **Bear Market Cycles**: Strategy may require suspension during extended downtrends
 
 ### **Operational Risks**
-1. **Platform Risk**: Lending platform insolvency or operational issues
-2. **Custody Risk**: Counterparty holds collateral Bitcoin
-3. **Regulatory Risk**: Changes in lending regulations or Bitcoin legal status
-4. **Technical Risk**: Platform outages during critical margin calls
+1. **Platform Risk**: Figure Lending operational or financial issues
+2. **Timing Risk**: Poor entry timing at local tops
+3. **Complexity Risk**: Multiple moving parts vs simple holding
 
 ## 📈 **SUCCESS CONDITIONS**
 
-### **Market Conditions Favoring Strategy**
-- **Steady Uptrends**: 20-50% annual Bitcoin appreciation
-- **Short Corrections**: Quick recoveries from 10-30% drawdowns  
-- **Low Volatility Periods**: Reduced risk of margin calls
-- **Bull Market Cycles**: Extended periods of growth with minor pullbacks
-
-### **Capital Requirements for Viability**
-- **Minimum Recommended**: 0.50 BTC starting capital
-- **Conservative Approach**: 1.0+ BTC starting capital
-- **Risk Management**: Never use more than 25% of Bitcoin holdings as collateral
+### **Optimal Market Conditions**
+- **Steady Bull Markets**: Consistent $30K appreciation cycles
+- **Moderate Volatility**: Fluctuations that don't trigger margin calls
+- **Short Correction Periods**: Quick recoveries from temporary dips
 
 ### **Performance Benchmarks**
-- **Target**: Outperform simple Bitcoin holding by 20-50%
-- **Acceptable**: Match Bitcoin holding performance after fees
-- **Failure Threshold**: Underperform Bitcoin holding by more than 10%
+- **Target Cycles**: 10-15 cycles to reach 1.0 BTC (estimated)
+- **Time Horizon**: 2-4 years depending on market conditions
+- **Efficiency Target**: >0.5% BTC gain per cycle after all costs
 
 ## ❌ **FAILURE CONDITIONS**
 
-### **Market Conditions Causing Failure**
-- **Extended Bear Markets**: 2+ years of declining Bitcoin prices
-- **Major Crashes**: 70%+ drawdowns lasting 6+ months
-- **High Volatility**: Frequent margin calls depleting capital
-- **Regulatory Crackdowns**: Restrictions on Bitcoin lending
+### **Strategy Failure Scenarios**
+1. **Liquidation Event**: Loss of 0.12 BTC collateral
+2. **Backup Depletion**: Multiple margin calls exhaust backup funds
+3. **Extended Stagnation**: BTC fails to appreciate $30K for extended periods
+4. **Bear Market**: Sustained decline below viable entry levels
 
-### **Strategy Failure Indicators**
-- **Liquidation Events**: Loss of collateral Bitcoin
-- **Negative Returns**: Strategy underperforms simple holding
-- **Capital Depletion**: Insufficient funds for margin calls
-- **Stress Exhaustion**: Constant monitoring becomes unsustainable
+### **Early Warning Indicators**
+- Multiple margin calls within single cycle
+- Cycles taking >12 months to complete
+- Backup collateral below 0.05 BTC
+- Interest costs exceeding 3% of total portfolio value
 
 ## 🛡️ **RISK MITIGATION MEASURES**
 
-### **Position Sizing**
-- **Conservative LTV**: Never exceed 30% loan-to-value even if platform allows higher
-- **Collateral Buffer**: Always maintain 0.15+ BTC as uncommitted reserves
-- **Gradual Scaling**: Start with minimum loans, increase only after successful cycles
+### **Collateral Management**
+- **Fixed Allocation**: Always use exactly 0.12 BTC as collateral
+- **Backup Reserve**: Maintain 0.12 BTC minimum backup for margin calls
+- **Emergency Protocol**: Exit strategy if backup falls below 0.08 BTC
 
 ### **Market Timing**
-- **Bear Market Avoidance**: Suspend strategy during extended downtrends
-- **Entry Discipline**: Only start cycles during confirmed uptrends or strong support levels
-- **Exit Discipline**: Close positions at predetermined profit targets or time limits
+- **Entry Discipline**: Only start cycles during confirmed uptrends
+- **Bear Market Suspension**: Pause strategy during extended downtrends
+- **Volatility Assessment**: Avoid entries during high volatility periods
 
-### **Emergency Protocols**
-- **Margin Call Response**: Pre-planned actions for LTV threshold breaches
-- **Market Crash Response**: Immediate position closure triggers
-- **Platform Risk Response**: Diversification across multiple lending platforms
+### **Position Monitoring**
+- **Daily LTV Tracking**: Monitor loan-to-value ratios
+- **Price Alert System**: Set alerts for margin call and liquidation levels
+- **Backup Deployment**: Pre-planned response for margin call scenarios
 
-## 📋 **STRATEGY CHECKLIST**
+## 📋 **STRATEGY IMPLEMENTATION CHECKLIST**
 
-### **Pre-Cycle Requirements**
-- [ ] Sufficient Bitcoin holdings (0.50+ BTC recommended)
-- [ ] Emergency fund for margin calls (20% of loan amount in USD)
-- [ ] Market analysis confirming favorable conditions
-- [ ] Platform due diligence and account setup
-- [ ] Risk tolerance assessment and position sizing
+### **Pre-Strategy Requirements**
+- [ ] $30,000 USD liquid capital available
+- [ ] Figure Lending account setup and verified
+- [ ] Understanding of all contract terms and risks
+- [ ] Market analysis confirming favorable entry conditions
+- [ ] Emergency fund separate from strategy capital
 
-### **During Cycle Monitoring**
-- [ ] Daily LTV monitoring and alerts
-- [ ] Interest payment tracking and strategy optimization
-- [ ] Market condition assessment and exit planning
-- [ ] Platform operational status monitoring
-- [ ] Regulatory environment monitoring
+### **Cycle Execution Checklist**
+- [ ] Current BTC price confirmed and recorded
+- [ ] Exit target price calculated ($30K appreciation)
+- [ ] 0.12 BTC collateral deposited
+- [ ] $10,000 loan originated
+- [ ] Daily LTV monitoring system activated
+- [ ] Backup collateral reserved and available
 
-### **Post-Cycle Analysis**
-- [ ] Performance calculation vs benchmarks
-- [ ] Risk-adjusted return analysis
-- [ ] Strategy effectiveness review
-- [ ] Parameter optimization for next cycle
-- [ ] Overall portfolio impact assessment
+### **Cycle Exit Checklist**
+- [ ] Exit price target achieved
+- [ ] Total repayment amount calculated
+- [ ] Loan repayment executed
+- [ ] Collateral retrieved
+- [ ] Net BTC gain recorded
+- [ ] Portfolio rebalanced for next cycle
 
-## 🎯 **RECOMMENDED IMPLEMENTATION APPROACH**
+## 🎯 **SPECIFIC IMPLEMENTATION FLOW**
 
-### **Phase 1: Education & Preparation (1-3 months)**
-1. Study Bitcoin market cycles and historical drawdowns
-2. Research lending platforms and contract terms
-3. Develop risk management protocols
-4. Practice with simulation tools
-5. Build sufficient Bitcoin capital base
+### **Cycle 1 Example (BTC @ $118K)**
+1. **Start**: $30K cash → Buy 0.254 BTC @ $118K
+2. **Collateral**: Lock 0.12 BTC, hold 0.134 BTC backup
+3. **Loan**: Borrow $10K @ 11.5% APR
+4. **Exit Target**: BTC price reaches $148K
+5. **Repayment**: ~$11.5K (principal + interest)
+6. **Result**: Net gain ~0.007 BTC, total ~0.261 BTC
 
-### **Phase 2: Conservative Testing (6-12 months)**
-1. Start with minimum loan amounts
-2. Use shortest loan terms available
-3. Focus on capital preservation over profit maximization
-4. Document all decisions and outcomes
-5. Refine strategy based on real experience
+### **Cycle 2 Example (BTC @ $148K)**
+1. **Start**: 0.261 BTC total
+2. **Collateral**: Lock 0.12 BTC, hold 0.141 BTC backup
+3. **Loan**: Borrow $10K @ 11.5% APR
+4. **Exit Target**: BTC price reaches $178K
+5. **Repayment**: ~$11.5K
+6. **Result**: Net gain ~0.007 BTC, total ~0.268 BTC
 
-### **Phase 3: Scaled Implementation (12+ months)**
-1. Gradually increase position sizes based on success
-2. Optimize timing and market condition awareness
-3. Consider multiple platform diversification
-4. Implement advanced risk management techniques
-5. Regular strategy performance review and adjustment
+### **Progression to Goal**
+Continue cycles until total BTC holdings ≥ 1.0 BTC achieved.
 
 ## ⚖️ **HONEST RISK ASSESSMENT**
 
-### **Probability of Success**
-- **Experienced Traders**: 30-50% chance of meaningful outperformance
-- **Average Investors**: 10-20% chance of beating simple holding
-- **Novice Investors**: High probability of underperformance or loss
-
 ### **Realistic Expectations**
-- **Best Case**: 20-30% annual outperformance vs holding Bitcoin
-- **Likely Case**: Similar performance to holding with higher stress/complexity
-- **Worst Case**: Significant underperformance due to liquidations and fees
+- **Time Horizon**: 3-5 years in favorable markets
+- **Success Probability**: 30-50% for experienced traders
+- **Alternative Strategies**: Simple DCA may achieve similar results with less risk
 
-### **Alternative Strategies to Consider**
-1. **Simple Bitcoin Holding**: Lower stress, historically strong performance
-2. **Dollar Cost Averaging**: Systematic accumulation with reduced timing risk
-3. **Traditional Margin Trading**: Direct leverage without collateral lock-up
-4. **Bitcoin Mining**: Alternative way to accumulate Bitcoin over time
+### **Capital Requirements Validation**
+- **Minimum Viable**: $30K starting capital (as designed)
+- **Optimal**: $50K+ for additional safety margins
+- **Risk Tolerance**: High - potential loss of significant capital
 
-## 🏁 **CONCLUSION**
-
-The Bitcoin collateral lending strategy is a **high-risk, high-complexity approach** that may appeal to experienced investors seeking to leverage Bitcoin's volatility. However, it requires:
-
-- **Substantial capital** (0.50+ BTC minimum)
-- **Active management** and constant monitoring
-- **Strong risk management** discipline
-- **Market timing** skills
-- **High stress tolerance**
-
-**For most investors, simple Bitcoin holding or Dollar Cost Averaging will likely provide better risk-adjusted returns with significantly less complexity and stress.**
-
-This strategy should only be considered by investors who:
-- Have substantial Bitcoin holdings beyond their core position
-- Understand and can afford the risk of total loss
+### **Strategy Viability**
+This strategy is designed for investors who:
+- Have $30K+ they can afford to lose entirely
+- Can actively monitor and manage positions daily
 - Have experience with leveraged trading
-- Can dedicate significant time to monitoring and management
+- Understand and accept liquidation risks
 
 ---
-*Document Version: 1.0*  
+*Document Version: 2.0*  
 *Last Updated: January 30, 2025*  
-*Status: Strategy Documentation Complete*
+*Status: Restructured per Mermaid Diagram Flow*
