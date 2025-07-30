@@ -1,0 +1,52 @@
+🚀 Starting Accurate Bitcoin Collateral Lending Simulation
+============================================================
+📁 Export directory: exports/simulation_20250730_173700
+============================================================
+⚠️  nasdaq-data-link not installed
+📈 Tier 2: Trying Kraken API...
+✅ Kraken successful: 720 days
+📊 Loaded 720 days of price data
+📈 Analyzed 516 historical recovery cycles
+📊 Using probabilistic drawdown model based on Bitcoin crash history
+📈 Historical data shows:
+   • Worst observed drawdown: 26.2%
+   • 95th percentile drawdown: 22.2%
+   • Median drawdown: 7.1%
+🎲 Probabilistic model samples at $60,714:
+🎲 Monte Carlo Run #1: 26.7% drawdown at $60,714
+   Scenario: Moderate correction (20-40%)
+   Sample 1: 26.7%
+🎲 Monte Carlo Run #2: 17.8% drawdown at $60,714
+   Scenario: Minor correction (5-20%)
+   Sample 2: 17.8%
+🎲 Monte Carlo Run #3: 48.0% drawdown at $60,714
+   Scenario: Major correction (40-60%)
+   Sample 3: 48.0%
+💰 Initial loan amount: $10,000
+🪙 Initial collateral: 0.1200 BTC
+📉 Expected worst drawdown: 43.1%
+🎲 Simulating realistic outcomes for 6-month cycle starting at $118,000
+🎲 Selected scenario: sideways - Choppy sideways movement
+   Outcome: LIQUIDATION, Price: $100,481
+💥 LIQUIDATION in cycle 1 - simulation terminated
+💾 Saved cycles log: exports/simulation_20250730_173700/cycles_log.csv
+📊 Saved analysis plot: exports/simulation_20250730_173700/simulation_analysis.png
+
+============================================================
+📊 SIMULATION SUMMARY
+============================================================
+💰 Final BTC Holdings: 0.0000 BTC
+🔄 Total Cycles: 1
+⏱️  Total Time: 180 days (0.5 years)
+💸 Total Interest Paid: $0
+📊 Average Interest Rate: 0.0%
+🔵 Deferred Interest Cycles: 0
+🔴 Monthly Payment Cycles: 0
+⚠️  Margin Calls: 0
+💥 Liquidations: 1
+❌ Goal not reached. Strategy may not be viable.
+
+📁 All files saved to: exports/simulation_20250730_173700
+   • cycles_log.csv - Detailed cycle data
+   • simulation_analysis.png - Visual analysis
+   • simulation_summary.txt - Text summary
