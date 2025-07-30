@@ -958,23 +958,58 @@ while state["free_btc"] < state["btc_goal"]:
     # BTC purchased with loan (assuming instant buy at entry price)
     btc_bought = loan / entry_price
 
-    # Realistic compound interest calculation based on actual cycle duration
+    # Realistic compound interest calculation with deferred interest option
     daily_rate = params["loan_rate"] / 365
-    interest = loan * ((1 + daily_rate) ** actual_days - 1)
-    payoff = loan + interest
+    
+    # Calculate both payment strategies
+    monthly_payment = loan * params["loan_rate"] / 12
+    total_monthly_payments = (actual_days / 30) * monthly_payment
+    
+    # Strategy 1: Monthly payments (reduces collateral each month)
+    btc_sold_for_monthly_payments = total_monthly_payments / ((entry_price + exit_price) / 2)
+    
+    # Strategy 2: Deferred interest (compounds but preserves collateral)
+    deferred_interest = loan * ((1 + daily_rate) ** actual_days - 1)
+    
+    # Choose optimal strategy based on market conditions and LTV risk
+    # Generally prefer deferral during bull markets to preserve appreciating BTC
+    ltv_with_deferral = (loan + deferred_interest) / (state["collat_btc"] * exit_price)
+    ltv_with_payments = loan / ((state["collat_btc"] - btc_sold_for_monthly_payments) * exit_price)
+    
+    # Use deferred interest if LTV remains manageable and we're in a bull market
+    if ltv_with_deferral < 0.75 and exit_price > entry_price:
+        # Deferred interest strategy
+        interest = deferred_interest
+        payoff = loan + interest
+        collateral_impact = 0  # No BTC sold during cycle
+        strategy_used = "deferred"
+    else:
+        # Monthly payment strategy
+        interest = total_monthly_payments
+        payoff = loan + interest
+        collateral_impact = btc_sold_for_monthly_payments
+        strategy_used = "monthly_payments"
 
-    # Sell BTC equal to payoff
-    btc_sold = payoff / exit_price
+    # Calculate BTC flows based on chosen strategy
+    if strategy_used == "deferred":
+        # Only sell BTC for final payoff (loan + compound interest)
+        btc_sold = payoff / exit_price
+        net_collateral_btc = state["collat_btc"]  # No reduction during cycle
+    else:
+        # Sell BTC for final loan principal + any remaining interest
+        btc_sold = loan / exit_price  # Principal only at exit
+        net_collateral_btc = state["collat_btc"] - collateral_impact  # Reduced by monthly sales
+    
     gain_btc = btc_bought - btc_sold
 
-    # Step 4: release all collateral back to free BTC
-    state["free_btc"] += gain_btc + state["collat_btc"]
+    # Step 4: release remaining collateral back to free BTC
+    state["free_btc"] += gain_btc + net_collateral_btc
     state["collat_btc"] = params["start_collateral_btc"]  # reset reserve
 
     # Step 5: set next loan equal to cap for new price
     state["loan"] = cap_next_loan(exit_price, state["collat_btc"])
 
-    # Log cycle with timing and interest details
+    # Log cycle with detailed payment strategy tracking
     records.append({
         "cycle": state["cycle"],
         "entry_price": entry_price,
@@ -987,11 +1022,18 @@ while state["free_btc"] < state["btc_goal"]:
         "interest_paid": interest,
         "total_payoff": payoff,
         "interest_as_pct_of_loan": (interest / loan) * 100,
+        "payment_strategy": strategy_used,
+        "monthly_payment_amount": monthly_payment,
+        "deferred_interest_amount": deferred_interest if 'deferred_interest' in locals() else 0,
+        "btc_sold_monthly": collateral_impact,
+        "ltv_with_deferral": ltv_with_deferral if 'ltv_with_deferral' in locals() else 0,
+        "ltv_with_payments": ltv_with_payments if 'ltv_with_payments' in locals() else 0,
         "needed_cure_btc": needed_btc,
         "btc_free": state["free_btc"],
         "btc_bought": btc_bought,
         "btc_sold": btc_sold,
         "net_btc_gain": gain_btc,
+        "net_collateral_btc": net_collateral_btc,
     })
 
     # Safety break
@@ -1027,6 +1069,12 @@ total_cycles = len(df)
 total_days = df['cycle_duration_days'].sum()
 avg_cycle_days = df['cycle_duration_days'].mean()
 
+# Payment strategy analysis
+deferred_cycles = len(df[df['payment_strategy'] == 'deferred'])
+monthly_payment_cycles = len(df[df['payment_strategy'] == 'monthly_payments'])
+total_deferred_interest = df[df['payment_strategy'] == 'deferred']['deferred_interest_amount'].sum()
+total_monthly_interest = df[df['payment_strategy'] == 'monthly_payments']['interest_paid'].sum()
+
 print(f"\n📊 SIMULATION SUMMARY:")
 print(f"   💰 Final BTC Holdings: {final_btc:.4f} BTC")
 print(f"   🔄 Total Cycles: {total_cycles}")
@@ -1036,6 +1084,12 @@ print(f"   💸 Total Interest Paid: ${total_interest:,.0f}")
 print(f"   📈 Average Loan Size: ${total_loans/total_cycles:,.0f}")
 print(f"   📊 Interest as % of Total Loans: {100*total_interest/total_loans:.1f}%")
 print(f"   🎯 Average Annualized Return: {df['annualized_return_pct'].mean():.1f}%")
+print(f"\n💡 PAYMENT STRATEGY ANALYSIS:")
+print(f"   🔄 Deferred Interest Cycles: {deferred_cycles} ({100*deferred_cycles/total_cycles:.1f}%)")
+print(f"   💳 Monthly Payment Cycles: {monthly_payment_cycles} ({100*monthly_payment_cycles/total_cycles:.1f}%)")
+print(f"   📈 Total Deferred Interest: ${total_deferred_interest:,.0f}")
+print(f"   📊 Total Monthly Interest: ${total_monthly_interest:,.0f}")
+print(f"   💰 Interest Savings from Strategy: ${(total_deferred_interest + total_monthly_interest) - total_interest:,.0f}")
 
 print("\nSimulation complete.  Files saved:\n"
       "  • cycles_log.csv\n"
