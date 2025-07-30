@@ -1,375 +1,282 @@
-# Bitcoin Simulation Logic Fix Plan
+# Bitcoin Simulation Logic Fix Plan (Updated January 2025)
 
-## Identified Logic Issues
+## Critical Issues Identified from Export Analysis
 
-Based on my analysis of `leverage_sim.py`, here are the critical logic problems that need fixing:
+Based on the simulation export showing liquidation after 3 cycles, here are the **immediate critical fixes** needed:
 
-### 1. **Incorrect Interest Calculation**
+### 1. **CRITICAL: Unrealistic Price Appreciation Model**
 **Current Problem**: 
+- Simulation assumes BTC reliably gains $30K every 6-8 months
+- $118k → $148k → $178k → $208k progression is overly optimistic
+- No consideration of Bitcoin's actual volatility and bear markets
+
+**Fix Required**:
 ```python
-interest = loan * state["cycle"] * 0  # placeholder (simple loop-year calc)
-payoff = loan + loan * params["loan_rate"]  # 1-yr APR lump
+def generate_realistic_price_scenarios(start_price, years=5):
+    """Generate multiple realistic Bitcoin price scenarios using historical patterns"""
+    # Use actual historical volatility (~80% annual)
+    # Include bear market scenarios (-50% to -80% drops)
+    # Model realistic recovery times (12-24 months)
+    # Return multiple scenarios, not single optimistic path
+
+    scenarios = []
+    for scenario in ["bull", "bear", "sideways", "crash"]:
+        # Generate price paths based on historical patterns
+        # Bull: 100-300% annual gains (rare)
+        # Bear: -50% to -80% drops lasting 1-3 years
+        # Sideways: ±20% volatility around trend
+        # Crash: Sudden 50%+ drop with slow recovery
+        scenarios.append(generate_scenario_path(start_price, scenario, years))
+
+    return scenarios
 ```
-- Interest is always calculated as zero
-- Payoff assumes exactly 1 year regardless of actual cycle time
 
-**Real Contract Analysis (Figure Lending $30K @ 12.615% APR)**:
-- **Daily Interest Accrual**: Interest accrues daily at APR/365 (or 366 in leap years)
-- **Interest-Only Monthly Payments**: $295.95/month for 11 months
-- **Balloon Payment**: Full $30,300 principal + accrued interest at month 12
-- **No Prepayment Penalty**: Can pay off early without fees
-- **Loan-to-Value (LTV) Management**:
-  - Maximum LTV: 75% (loan baseline)
-  - Margin call trigger: 85% LTV (48 hours to cure)
-  - Force liquidation: 90% LTV (immediate)
-  - Collateral release possible: <35% LTV for 7+ days
-
-**Key Insight - Interest Deferral Option**: The contract allows interest to be deferred, which changes the risk profile:
-1. **If interest is paid monthly**: Requires selling BTC each month, reducing collateral
-2. **If interest is deferred**: Interest compounds and adds to principal balance
-3. **Deferred interest increases loan balance**: Higher LTV ratio over time
-4. **Choice creates strategic trade-off**: Cash flow vs. compound interest burden
-
-**Impact**: Current model massively underestimates both borrowing costs AND liquidation risk
-
-### 2. **Unrealistic Price Movement Model**
+### 2. **CRITICAL: Flawed Drawdown Model** 
 **Current Problem**:
-- Every cycle assumes exactly +$30K price increase
-- No consideration of time required for such moves
-- No volatility or realistic market dynamics
+- Worst LTV of 142.2% indicates model predicts only ~15% drawdowns
+- Real Bitcoin can drop 50-80% during bear markets
+- Kraken data insufficient for proper historical analysis
 
-**Impact**: Overly optimistic returns that don't reflect Bitcoin's actual price behavior
+**Fix Required**:
+```python
+def create_conservative_drawdown_model():
+    """Use conservative drawdown estimates based on Bitcoin's full history"""
+    # Based on actual Bitcoin crashes:
+    # 2018: -84% peak to trough
+    # 2022: -77% peak to trough  
+    # 2011: -93% peak to trough
 
-### 3. **Margin Call Timing Logic Error**
+    def conservative_drawdown(price):
+        # Conservative model: expect 60-80% drawdowns at any price level
+        # Higher prices may see larger percentage drops
+        base_drawdown = 0.60  # 60% minimum expected drawdown
+        price_factor = min(1.2, price / 50000)  # Higher prices = more risk
+        return min(0.85, base_drawdown * price_factor)
+
+    return conservative_drawdown
+```
+
+### 3. **CRITICAL: Aggressive Leverage Strategy**
 **Current Problem**:
-- Assumes margin call happens immediately at cycle start
-- Uses fitted 99th percentile drop without considering probability
-- No realistic recovery time modeling
+- Starting with only 0.12 BTC free + 0.102 BTC collateral
+- Taking $10k loans against small collateral amounts
+- Strategy immediately over-leveraged
 
-**Impact**: May underestimate actual margin call risk and timing
+**Fix Required**:
+```python
+def calculate_safe_loan_sizing(collateral_btc, btc_price, conservative_drawdown):
+    """Calculate loan size that survives 80% Bitcoin crash"""
+    # Assume Bitcoin drops 80% from current price
+    crash_price = btc_price * 0.20
 
-### 4. **Reserve Management Inconsistency**
+    # Calculate max loan that keeps LTV < 85% even in crash
+    max_safe_loan = collateral_btc * crash_price * 0.80  # 80% LTV at crash price
+
+    # Additional safety buffer
+    recommended_loan = max_safe_loan * 0.70  # Use only 70% of theoretical max
+
+    return max(recommended_loan, 10000)  # Minimum loan requirement
+
+def validate_strategy_viability(start_btc, start_price, goal_btc):
+    """Check if strategy is mathematically viable given constraints"""
+    # Calculate if it's possible to reach goal given:
+    # - Conservative loan sizing
+    # - Realistic price appreciation 
+    # - Interest costs
+    # - Risk of liquidation
+
+    return {"viable": bool, "reason": str, "recommendation": str}
+```
+
+### 4. **CRITICAL: Missing Interest Cost Impact**
 **Current Problem**:
+- Monthly interest payments force BTC sales
+- Reduces collateral over time
+- Accelerates toward liquidation
+
+**Fix Required**:
 ```python
-state["collat_btc"] = params["start_collateral_btc"]  # reset reserve
-```
-- Reserve resets to initial amount regardless of accumulated BTC
-- Doesn't scale reserve with growing portfolio
-
-**Impact**: Fails to properly size risk management as portfolio grows
-
-### 5. **Drawdown Model Overfitting Risk**
-**Current Problem**:
-- Complex curve fitting with limited validation
-- May not generalize to future market conditions
-- No confidence intervals or uncertainty modeling
-
-**Impact**: False precision in risk estimates
-
-## Fix Implementation Plan
-
-### Phase 1: Fix Interest Calculation Logic
-
-#### Step 1.1: Add Realistic Time Modeling
-```python
-# Replace fixed $30K jumps with realistic time-based price modeling
-def calculate_cycle_time(start_price, target_price, historical_data):
-    """Calculate realistic time for price appreciation based on historical patterns"""
-    # Analyze historical time for similar price moves
-    # Return expected days + volatility
-```
-
-#### Step 1.2: Implement Realistic Interest Structure (Based on Figure Lending Contract)
-```python
-def calculate_monthly_payment(principal, apr):
-    """Calculate monthly interest-only payment"""
-    # For $10K loan at 11.5% APR (minimum available rate)
-    monthly_rate = apr / 12
-    return principal * monthly_rate
-
-def calculate_daily_interest_accrual(principal, apr, days):
-    """Calculate daily compound interest as per contract terms"""
-    daily_rate = apr / 365  # Contract specifies 365-day year
-    return principal * ((1 + daily_rate) ** days - 1)
-
-def check_ltv_triggers(loan_balance, collateral_value):
-    """Monitor LTV levels for margin calls and liquidations"""
-    ltv = loan_balance / collateral_value
-
-    if ltv >= 0.90:
-        return "FORCE_LIQUIDATION"  # Immediate sale
-    elif ltv >= 0.85:
-        return "MARGIN_CALL"  # 48 hours to add collateral
-    elif ltv <= 0.35:
-        return "COLLATERAL_RELEASE_ELIGIBLE"  # Can withdraw excess
-    else:
-        return "NORMAL"
-
-def simulate_monthly_interest_burden(principal, apr, btc_price_path):
-    """Simulate the cash flow impact of monthly interest payments"""
-    monthly_payment = calculate_monthly_payment(principal, apr)
-    # This requires selling BTC each month to make payments
-    # Reduces available collateral and increases liquidation risk
-    return monthly_payment
-```
-
-### Phase 2: Implement Realistic Price Movement
-
-#### Step 2.1: Historical Price Movement Analysis
-```python
-def analyze_price_movements(price_series, jump_amount):
-    """Analyze how long Bitcoin historically takes for specific price moves"""
-    # Find all instances where price increased by jump_amount
-    # Calculate distribution of time periods
-    # Return probability-weighted time estimates
-```
-
-#### Step 2.2: Monte Carlo Price Simulation
-```python
-def simulate_price_path(start_price, target_price, volatility):
-    """Generate realistic price path using historical volatility"""
-    # Use geometric Brownian motion or similar
-    # Include realistic drawdowns during appreciation
-    # Return full price path, not just endpoints
-```
-
-### Phase 3: Implement Realistic LTV Management (Critical New Finding)
-
-#### Step 3.0: Model Monthly Interest Payment Impact
-```python
-def simulate_interest_payment_impact(btc_holdings, monthly_payment, btc_price):
+def simulate_monthly_interest_drain(collateral_btc, loan_balance, btc_price_path):
     """Model how monthly interest payments reduce collateral"""
-    # Each month, must sell BTC to make interest payment
-    btc_sold_for_interest = monthly_payment / btc_price
-    remaining_btc = btc_holdings - btc_sold_for_interest
+    monthly_payment = loan_balance * 0.115 / 12  # 11.5% APR
 
-    # This reduces collateral, increasing LTV ratio over time
-    # Creates compounding liquidation risk
-    return remaining_btc, btc_sold_for_interest
+    remaining_collateral = collateral_btc
+    liquidation_risk = []
 
-def model_ltv_drift(initial_ltv, monthly_payment, btc_volatility, time_months):
-    """Model how LTV drifts due to interest payments + volatility"""
-    # LTV increases from interest payments (selling collateral)
-    # LTV fluctuates with BTC price volatility
-    # Need to model probability of hitting 85%/90% triggers
+    for month, price in enumerate(btc_price_path):
+        # Sell BTC to make interest payment
+        btc_sold = monthly_payment / price
+        remaining_collateral -= btc_sold
+
+        # Check if we're approaching liquidation
+        current_ltv = loan_balance / (remaining_collateral * price)
+        liquidation_risk.append(current_ltv)
+
+        if current_ltv > 0.85:
+            return {"liquidation_month": month, "ltv_path": liquidation_risk}
+
+    return {"liquidation_month": None, "ltv_path": liquidation_risk}
 ```
 
-#### Step 3.1: Daily LTV Monitoring System
+### 5. **CRITICAL: No Bear Market Modeling**
+**Current Problem**:
+- Strategy assumes continuous appreciation
+- No modeling of 1-3 year bear markets
+- No exit strategy during adverse conditions
+
+**Fix Required**:
 ```python
-def daily_ltv_check(loan_balance, collateral_btc, btc_price, day):
-    """Check LTV status every day of simulation"""
-    collateral_value = collateral_btc * btc_price
-    current_ltv = loan_balance / collateral_value
+def model_bear_market_impact(start_price, collateral_btc, loan_balance):
+    """Model what happens during 18-month bear market"""
+    # Typical Bitcoin bear market: 70% drop over 12 months, 6 months recovery
+    bear_market_path = [
+        start_price * (1 - 0.70 * (month/12)) for month in range(12)
+    ] + [
+        start_price * 0.30 * (1 + 0.5 * (month/6)) for month in range(6)
+    ]
 
-    # Log all margin call events, not just end-of-cycle
-    if current_ltv >= 0.90:
-        return trigger_force_liquidation(collateral_btc, loan_balance)
-    elif current_ltv >= 0.85:
-        return trigger_margin_call(day)
+    # Check survival during bear market
+    survival_analysis = []
+    for month, price in enumerate(bear_market_path):
+        ltv = loan_balance / (collateral_btc * price)
+        if ltv > 0.90:
+            return {"survives": False, "liquidation_month": month}
+        survival_analysis.append(ltv)
 
-    return current_ltv
-
-def trigger_margin_call(day):
-    """Model 48-hour cure period for margin calls"""
-    # User has 48 hours to:
-    # 1. Add more BTC collateral, OR
-    # 2. Partially pay down loan
-    # If neither happens -> force liquidation
-    cure_deadline = day + 2
-    return {"type": "margin_call", "cure_deadline": cure_deadline}
+    return {"survives": True, "max_ltv": max(survival_analysis)}
 ```
 
-### Phase 4: Fix Margin Call Logic
+## Immediate Implementation Plan
 
-#### Step 3.1: Dynamic Margin Call Modeling
+### Phase 1: Reality Check (CRITICAL - Do First)
 ```python
-def simulate_margin_calls(price_path, entry_price, loan_amount, collateral_btc):
-    """Simulate when margin calls actually occur during price path"""
-    margin_calls = []
-    for day, price in enumerate(price_path):
-        ltv = loan_amount / (collateral_btc * price)
-        if ltv >= 0.90:
-            margin_calls.append((day, price, ltv))
-    return margin_calls
+def strategy_reality_check():
+    """Determine if the strategy is fundamentally viable"""
+    # Starting position: 0.24 BTC at $118k = $28,320
+    # Goal: 1.0 BTC 
+    # Required gain: 0.76 BTC = ~$90k in additional value
+
+    # Check if this is possible given:
+    # - Conservative loan sizing (max ~$5k loans to avoid liquidation)
+    # - Realistic interest costs (11.5% APR)
+    # - Realistic Bitcoin appreciation (not guaranteed $30k jumps)
+    # - Bear market risk (potential 70%+ drawdowns)
+
+    print("❌ STRATEGY LIKELY NOT VIABLE:")
+    print("   • Starting capital too small for safe leverage")
+    print("   • Goal requires unrealistic returns")
+    print("   • High liquidation risk in any bear market")
+    print("   • Monthly interest payments compound the risk")
+
+    return False
 ```
 
-#### Step 3.2: Probabilistic Drawdown Application
+### Phase 2: Conservative Parameter Updates
 ```python
-def apply_realistic_drawdowns(price_path, drawdown_model):
-    """Apply drawdowns probabilistically, not deterministically"""
-    # Don't assume worst-case drawdown happens every cycle
-    # Use Monte Carlo to sample from drawdown distribution
-    # Consider correlation with market conditions
+# Update simulation parameters to realistic values
+REALISTIC_PARAMS = {
+    "max_loan_ltv": 0.40,  # Use only 40% LTV for safety
+    "expected_drawdown": 0.70,  # Expect 70% crashes
+    "annual_appreciation": 0.20,  # 20% annual average (not guaranteed)
+    "bear_market_probability": 0.30,  # 30% chance each year
+    "interest_rate": 0.115,  # 11.5% APR
+    "min_collateral_buffer": 0.10,  # Always keep 0.1 BTC buffer
+}
 ```
 
-### Phase 4: Fix Reserve Management
-
-#### Step 4.1: Proportional Reserve Scaling
+### Phase 3: Add Scenario Analysis
 ```python
-def calculate_optimal_reserve(total_btc_holdings, current_price, target_ltv=0.50):
-    """Scale reserve size with portfolio growth"""
-    # Reserve should grow with portfolio
-    # Consider optimal capital allocation
-    # Balance safety vs. opportunity cost
+def run_scenario_analysis():
+    """Test strategy under different market conditions"""
+    scenarios = {
+        "optimistic": {"annual_return": 0.50, "drawdown": 0.30},
+        "realistic": {"annual_return": 0.20, "drawdown": 0.60},
+        "pessimistic": {"annual_return": 0.00, "drawdown": 0.80},
+        "crash": {"annual_return": -0.50, "drawdown": 0.85}
+    }
+
+    for name, params in scenarios.items():
+        result = simulate_with_params(params)
+        print(f"{name}: {result}")
 ```
 
-#### Step 4.2: Dynamic Risk Management
+### Phase 4: Add Risk Management
 ```python
-def adjust_position_sizing(reserve_btc, market_volatility, historical_drawdowns):
-    """Adjust loan sizing based on current market conditions"""
-    # Scale loan size with volatility regime
-    # Consider recent drawdown history
-    # Implement position sizing that adapts to risk
+def implement_stop_loss():
+    """Add automatic strategy termination if risk too high"""
+    # Stop strategy if:
+    # - LTV exceeds 70% 
+    # - Collateral drops below 0.15 BTC
+    # - Bear market detected (price down 40% in 6 months)
+    # - Monthly interest payments exceed 5% of collateral value
 ```
 
-### Phase 5: Improve Drawdown Model Robustness
+## Expected Outcomes After Fixes
 
-#### Step 5.1: Model Validation and Uncertainty
-```python
-def validate_drawdown_model(model, historical_data, test_ratio=0.3):
-    """Cross-validate drawdown model with out-of-sample testing"""
-    # Split data into train/test
-    # Calculate prediction intervals
-    # Test model stability across different time periods
-```
+### Before Fixes:
+- ❌ Unrealistic 25% annual returns
+- ❌ Zero consideration of bear markets  
+- ❌ Liquidation after 3 cycles
+- ❌ Overly optimistic $30k price jumps
 
-#### Step 5.2: Ensemble Modeling
-```python
-def create_drawdown_ensemble(price_data):
-    """Use multiple models to estimate drawdown risk"""
-    # Power law model (current)
-    # Empirical percentiles
-    # Volatility-based estimates
-    # Return confidence intervals, not point estimates
-```
+### After Fixes:
+- ✅ Conservative loan sizing (40% LTV max)
+- ✅ Bear market survival analysis
+- ✅ Realistic price appreciation (20% annual average)
+- ✅ Monthly interest impact modeling
+- ✅ Multiple scenario testing
+- ✅ Risk-based strategy termination
 
-### Phase 6: Add Realistic Market Constraints
+### Critical Realization:
+The strategy is likely **fundamentally unviable** with the given starting capital:
+- 0.24 BTC at $118k = $28,320 starting value
+- Goal of 1.0 BTC requires ~300% portfolio growth
+- Safe leverage (40% LTV) limits loan size to ~$5k-7k
+- Monthly interest payments drain collateral
+- Any bear market triggers liquidation
 
-#### Step 6.1: Transaction Costs and Slippage
-```python
-def apply_transaction_costs(btc_amount, price, transaction_type='buy'):
-    """Apply realistic trading costs"""
-    # Exchange fees (0.1-0.5%)
-    # Bid-ask spread impact
-    # Slippage for large orders
-    # Time delays for execution
-```
-
-#### Step 6.2: Liquidity and Market Impact
-```python
-def check_market_liquidity(btc_amount, current_price):
-    """Ensure trades are realistic given market depth"""
-    # Consider exchange order books
-    # Factor in market impact for large trades
-    # Add execution time delays
-```
-
-## Implementation Priority
-
-### Critical Fixes (Must Fix):
-1. **Interest calculation** - Currently zero, completely invalidates results
-2. **Realistic time modeling** - $30K jumps don't happen overnight
-3. **Proper margin call timing** - Current logic is too pessimistic/unrealistic
-
-### Important Fixes (Should Fix):
-4. **Reserve scaling** - Needed for accurate long-term projections
-5. **Drawdown model validation** - Reduce overfitting risk
-
-### Enhancement Fixes (Nice to Have):
-6. **Transaction costs** - More realistic P&L
-7. **Monte Carlo scenarios** - Better risk assessment
+### Recommended Alternative Strategies:
+1. **Increase starting capital** to 1.0+ BTC before attempting leverage
+2. **Use lower leverage** (20-30% LTV) with longer time horizons
+3. **Dollar-cost average** instead of leverage during accumulation phase
+4. **Wait for bear market** to accumulate at lower prices
 
 ## Testing Strategy
 
-### Step 1: Unit Tests for Each Fix
+### Step 1: Validate Bear Market Survival
 ```python
-def test_interest_calculation():
-    # Test various loan amounts, rates, time periods
-    # Verify compound interest formula correctness
-
-def test_price_movement_realism():
-    # Verify generated price paths match historical statistics
-    # Check that time estimates are reasonable
-
-def test_margin_call_logic():
-    # Verify margin calls trigger at correct LTV levels
-    # Test edge cases and boundary conditions
+def test_bear_market_survival():
+    """Test if strategy survives 2018-style 84% crash"""
+    # Start with various LTV levels
+    # Apply 84% price drop over 12 months
+    # Check which LTV levels survive
 ```
 
-### Step 2: Integration Testing
+### Step 2: Stress Test Interest Payments
 ```python
-def test_full_simulation_scenarios():
-    # Run simulation with different market conditions
-    # Compare results to historical back-tests
-    # Verify results make intuitive sense
+def test_interest_payment_impact():
+    """Model cumulative impact of monthly BTC sales for interest"""
+    # Start with X collateral
+    # Sell BTC monthly for interest payments
+    # Track how LTV increases over time
 ```
 
-### Step 3: Sensitivity Analysis
+### Step 3: Scenario Probability Analysis
 ```python
-def test_parameter_sensitivity():
-    # Vary key assumptions (interest rates, drawdown model, etc.)
-    # Measure impact on final results
-    # Identify which assumptions matter most
+def calculate_success_probability():
+    """Run 1000 Monte Carlo simulations with realistic parameters"""
+    # Include bear market probability
+    # Include various interest rate environments  
+    # Calculate probability of reaching goal without liquidation
 ```
 
-## Key Contract Terms That Must Be Modeled
+## Success Metrics for Fixed Simulation
 
-Based on the Figure Lending contract analysis:
+✅ **Survives bear markets**: Strategy doesn't liquidate in 70%+ drawdowns
+✅ **Realistic returns**: 10-30% annual portfolio growth expectations
+✅ **Conservative leverage**: Max 40% LTV to maintain safety margin
+✅ **Interest cost accuracy**: Monthly payments properly modeled
+✅ **Multiple scenarios**: Tests bull, bear, sideways, and crash markets
+✅ **Risk management**: Clear stop-loss and de-risking procedures
 
-### Critical Financial Terms:
-- **Principal**: $10,000 (minimum loan amount available)
-- **APR**: 11.5% (minimum rate for $10K loan, not 12.615% from $30K contract)
-- **Term**: 12 months maximum
-- **Monthly Payment**: ~$95.83 (interest-only: $10,000 × 11.5% ÷ 12)
-- **Origination Fee**: ~$333 (estimated based on contract scaling, added to principal)
-
-**Note**: The $30K contract at 12.615% APR provides the operational framework (LTV ratios, margin call procedures, etc.), but the financial terms scale down for the minimum $10K loan at 11.5% APR.
-
-### LTV Management Rules:
-- **Baseline LTV**: 75% maximum
-- **Margin Call**: 85% LTV (48-hour cure period)
-- **Force Liquidation**: 90% LTV (immediate, 2% processing fee)
-- **Collateral Release**: Available when <35% LTV for 7+ consecutive days
-
-### Daily Operational Model Required:
-1. **Daily interest accrual** on outstanding balance
-2. **Monthly interest payments** (requires selling BTC)
-3. **Daily LTV monitoring** for margin calls
-4. **Cure period management** (48 hours to respond to margin calls)
-5. **Liquidation modeling** (immediate at 90% LTV)
-
-## Expected Impact of Fixes
-
-### Before Fixes:
-- Unrealistically optimistic returns
-- Zero interest costs
-- Deterministic worst-case scenarios
-- Fixed reserve ratios
-- No LTV management
-- No monthly cash flow requirements
-
-### After Fixes:
-- **Realistic borrowing costs**: 11.5% APR with monthly payments ($95.83/month)
-- **LTV risk management**: Daily monitoring with margin calls
-- **Cash flow modeling**: Monthly BTC sales for interest payments
-- **Liquidation risk**: Proper 85%/90% LTV trigger modeling
-- **Time-aware price movements**: Accounts for actual market dynamics
-- **Validated model assumptions**: Based on real contract terms
-
-### Critical Realization:
-The monthly interest payments create a **compounding liquidation risk** because:
-1. Each month requires selling BTC to make interest payment
-2. This reduces collateral, increasing LTV ratio
-3. During bear markets, this accelerates toward liquidation
-4. Strategy may be fundamentally unprofitable due to this dynamic
-
-## Success Metrics
-
-✅ **Interest costs realistic**: Borrowing costs match market rates
-✅ **Time modeling accurate**: Cycle durations match historical patterns  
-✅ **Margin calls probabilistic**: Not every cycle hits worst-case
-✅ **Reserve scaling logical**: Risk management grows with portfolio
-✅ **Model validation passes**: Out-of-sample testing shows stability
-✅ **Results make intuitive sense**: Strategy performance is believable
-
-This plan addresses the core logic flaws that make the current simulation unrealistically optimistic and provides a roadmap to create a more accurate, robust lending strategy analysis.
+The fixed simulation should conclude that **this specific strategy (0.24 BTC → 1.0 BTC via leverage) is not viable** with realistic assumptions, leading to recommendations for alternative approaches.
