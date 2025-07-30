@@ -64,44 +64,79 @@ def generate_synthetic_btc_data():
     return pd.Series(prices, index=dates, name='Close')
 
 def load_btc_history() -> pd.Series:
-    """Load Bitcoin price history with fallbacks."""
+    """Load Bitcoin price history with fallbacks using US-compliant APIs."""
 
-    # Method 1: Binance API (720 days, no auth required)
+    # Method 1: Nasdaq Data Link (Best for 10+ years of data)
+    try:
+        import nasdaqdatalink
+        print("📈 Tier 1: Trying Nasdaq Data Link (Brave New Coin)...")
+        
+        # Try without API key first (limited requests)
+        try:
+            df = nasdaqdatalink.get("BNC/BLX", start_date="2010-01-01")
+            btc_series = df['Value'].astype(float)
+            btc_series.name = 'Close'
+            print(f"✅ Nasdaq Data Link successful: {len(btc_series)} days")
+            return btc_series
+        except Exception as auth_e:
+            print(f"⚠️  Nasdaq API needs key for full access: {auth_e}")
+            
+    except ImportError:
+        print("⚠️  nasdaq-data-link not installed")
+    except Exception as e:
+        print(f"⚠️  Nasdaq Data Link failed: {e}")
+
+    # Method 2: Kraken API (US-compliant exchange)
     try:
         import requests
-        print("📡 Trying Binance API...")
+        import time
+        print("📈 Tier 2: Trying Kraken API...")
         
-        # Binance klines endpoint for BTCUSDT
-        url = "https://api.binance.com/api/v3/klines"
-        params = {
-            'symbol': 'BTCUSDT',
-            'interval': '1d',
-            'limit': 720  # Maximum 720 days
-        }
+        url = "https://api.kraken.com/0/public/OHLC"
+        params = {'pair': 'XBTUSD', 'interval': 1440}  # 1440 minutes = 1 day
+        all_data = []
         
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        
-        data = response.json()
-        if data and len(data) > 100:
-            # Convert Binance data to pandas Series
-            # Binance format: [timestamp, open, high, low, close, volume, ...]
-            timestamps = [int(candle[0]) / 1000 for candle in data]  # Convert ms to seconds
-            closes = [float(candle[4]) for candle in data]  # Close prices
+        # Make multiple calls to get several years of data
+        for i in range(5):  # Get ~5 years of data
+            response = requests.get(url, params=params, timeout=15)
+            response.raise_for_status()
+            data = response.json()
             
-            dates = pd.to_datetime(timestamps, unit='s')
-            prices = pd.Series(closes, index=dates, name='Close')
+            if 'error' in data and data['error']:
+                print(f"⚠️  Kraken API error: {data['error']}")
+                break
+                
+            pair_name = list(data['result'].keys())[0]
+            ohlc_data = data['result'][pair_name]
+            all_data.extend(ohlc_data)
             
-            print(f"✅ Binance successful: {len(prices)} days")
-            return prices
+            # Use 'last' timestamp for pagination
+            if 'last' in data['result']:
+                last_ts = data['result']['last']
+                params['since'] = last_ts
+            
+            print(f"  Fetched {len(ohlc_data)} records from Kraken (batch {i+1})...")
+            time.sleep(1)  # Be respectful to API
+        
+        if all_data:
+            # Convert to DataFrame
+            df = pd.DataFrame(all_data, columns=['time', 'open', 'high', 'low', 'close', 'vwap', 'volume', 'count'])
+            df['time'] = pd.to_datetime(df['time'], unit='s')
+            df = df.set_index('time')
+            df = df[~df.index.duplicated(keep='first')].sort_index()
+            btc_series = df['close'].astype(float)
+            btc_series.name = 'Close'
+            
+            print(f"✅ Kraken successful: {len(btc_series)} days")
+            return btc_series
             
     except Exception as e:
-        print(f"⚠️  Binance API failed: {e}")
+        print(f"⚠️  Kraken API failed: {e}")
 
-    # Method 2: yfinance (if available)
+    # Method 3: yfinance (if available)
     if ONLINE:
         try:
-            print("📡 Trying yfinance...")
+            print("📡 Tier 3: Trying yfinance...")
             btc = yf.download("BTC-USD", start="2015-01-01", progress=False)
             if not btc.empty and 'Adj Close' in btc.columns:
                 prices = btc["Adj Close"].dropna()
@@ -111,7 +146,7 @@ def load_btc_history() -> pd.Series:
         except Exception as e:
             print(f"⚠️  yfinance failed: {e}")
 
-    # Method 3: Local CSV fallback
+    # Method 4: Local CSV fallback
     try:
         csv_files = ["btc_history_backup.csv", "btc_history.csv"]
         for csv_file in csv_files:
@@ -135,7 +170,7 @@ def load_btc_history() -> pd.Series:
     except Exception as e:
         print(f"⚠️  CSV loading failed: {e}")
 
-    # Method 4: Synthetic data (last resort)
+    # Method 5: Synthetic data (last resort)
     print("📊 All real data sources failed, using synthetic data...")
     return generate_synthetic_btc_data()
 
