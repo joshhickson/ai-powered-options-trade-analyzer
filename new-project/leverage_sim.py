@@ -144,11 +144,10 @@ def worst_drop_until_recovery(price_series: pd.Series, jump: float = 30000.0) ->
     df = pd.DataFrame(res, columns=["date", "price", "draw"])
     return df
 
-def create_probabilistic_drawdown_model(historical_data=None):
-    """Create a probabilistic drawdown model that samples from historical crash distributions."""
-    
-    # Historical Bitcoin crash data (manually curated from research)
-    # Format: (year, peak_price, trough_price, crash_percentage, duration_days)
+def create_true_monte_carlo_drawdown_model(historical_data=None):
+    """Create a TRUE Monte Carlo drawdown model that samples from historical distributions."""
+
+    # Historical Bitcoin crash data
     historical_crashes = [
         (2011, 32, 2, 0.93, 160),          # 93% crash
         (2014, 1165, 152, 0.87, 410),      # 87% crash  
@@ -159,23 +158,16 @@ def create_probabilistic_drawdown_model(historical_data=None):
         (2017, 20000, 11000, 0.45, 45),    # Mid-cycle correction
         (2019, 14000, 6400, 0.54, 180),    # Bear market low test
     ]
-    
-    # Convert to drawdown percentages
+
+    # Extract crash severities for sampling
     crash_severities = [crash[3] for crash in historical_crashes]
-    
-    def probabilistic_drawdown(price: float, cycle_number: int = 1) -> float:
+
+    def monte_carlo_drawdown(price: float, simulation_run: int = None) -> float:
         """
-        Sample a drawdown from historical distribution with realistic probabilities.
-        
-        Uses Monte Carlo sampling to determine crash severity based on:
-        - Historical frequency of different crash magnitudes
-        - Market cycle position
-        - Price level factors
+        TRUE Monte Carlo sampling - each call produces different random results.
+        NO deterministic seeding - truly random outcomes each time.
         """
-        
-        # Set random seed based on price and cycle for deterministic but varied results
-        np.random.seed(int(price) + cycle_number * 1000)
-        
+
         # Define probability buckets based on historical frequency
         drawdown_buckets = [
             {"range": (0.05, 0.20), "probability": 0.40, "description": "Minor correction (5-20%)"},
@@ -184,69 +176,151 @@ def create_probabilistic_drawdown_model(historical_data=None):
             {"range": (0.60, 0.80), "probability": 0.10, "description": "Severe crash (60-80%)"},
             {"range": (0.80, 0.95), "probability": 0.05, "description": "Extreme crash (80-95%)"},
         ]
-        
-        # Adjust probabilities based on price level and market conditions
-        if price > 100000:  # Uncharted territory - higher crash risk
-            # Shift probability toward larger crashes
-            drawdown_buckets[0]["probability"] = 0.25  # Reduce minor corrections
-            drawdown_buckets[2]["probability"] = 0.30  # Increase major corrections
-            drawdown_buckets[3]["probability"] = 0.15  # Increase severe crashes
-            drawdown_buckets[4]["probability"] = 0.10  # Increase extreme crashes
-        elif price < 30000:  # Lower prices - more stable historically
-            # Shift probability toward smaller corrections
-            drawdown_buckets[0]["probability"] = 0.50  # Increase minor corrections
-            drawdown_buckets[3]["probability"] = 0.05  # Decrease severe crashes
-            drawdown_buckets[4]["probability"] = 0.02  # Decrease extreme crashes
-        
+
+        # Adjust probabilities based on price level
+        if price > 100000:
+            drawdown_buckets[0]["probability"] = 0.25
+            drawdown_buckets[2]["probability"] = 0.30
+            drawdown_buckets[3]["probability"] = 0.15
+            drawdown_buckets[4]["probability"] = 0.10
+        elif price < 30000:
+            drawdown_buckets[0]["probability"] = 0.50
+            drawdown_buckets[3]["probability"] = 0.05
+            drawdown_buckets[4]["probability"] = 0.02
+
         # Normalize probabilities
         total_prob = sum(bucket["probability"] for bucket in drawdown_buckets)
         for bucket in drawdown_buckets:
             bucket["probability"] /= total_prob
-        
-        # Sample from probability distribution
+
+        # TRUE RANDOM SAMPLING - no seed setting!
         rand_val = np.random.random()
         cumulative_prob = 0
         selected_bucket = None
-        
+
         for bucket in drawdown_buckets:
             cumulative_prob += bucket["probability"]
             if rand_val <= cumulative_prob:
                 selected_bucket = bucket
                 break
-        
+
         if selected_bucket is None:
-            selected_bucket = drawdown_buckets[-1]  # Fallback
-        
-        # Sample specific drawdown within the selected bucket
+            selected_bucket = drawdown_buckets[-1]
+
+        # Sample specific drawdown within bucket
         min_draw, max_draw = selected_bucket["range"]
         sampled_drawdown = np.random.uniform(min_draw, max_draw)
-        
-        print(f"🎲 Probabilistic drawdown at ${price:,.0f}: {sampled_drawdown:.1%}")
-        print(f"   Selected: {selected_bucket['description']}")
-        print(f"   (Sampled from historical crash distribution)")
-        
+
+        if simulation_run is not None:
+            print(f"🎲 Monte Carlo Run #{simulation_run}: {sampled_drawdown:.1%} drawdown at ${price:,.0f}")
+            print(f"   Scenario: {selected_bucket['description']}")
+
         return sampled_drawdown
-    
-    return probabilistic_drawdown
+
+    return monte_carlo_drawdown
+
+def run_monte_carlo_simulation(start_btc: float, start_price: float, btc_goal: float, num_simulations: int = 1000):
+    """Run TRUE Monte Carlo simulation with thousands of random scenarios."""
+    print(f"🎲 Running {num_simulations} Monte Carlo simulations...")
+
+    drawdown_model = create_true_monte_carlo_drawdown_model()
+    simulator = LoanSimulator()
+
+    results = []
+    liquidation_count = 0
+    success_count = 0
+
+    for sim_run in range(num_simulations):
+        if sim_run % 100 == 0:
+            print(f"   Progress: {sim_run}/{num_simulations} simulations...")
+
+        # Reset for each simulation
+        free_btc = start_btc * 0.5  # Conservative starting position
+        collateral_btc = start_btc * 0.5
+        current_price = start_price
+        cycle = 0
+        simulation_liquidated = False
+
+        # Run simulation until goal or liquidation
+        while free_btc < btc_goal and cycle < 20 and not simulation_liquidated:
+            cycle += 1
+
+            # Get random drawdown for this cycle
+            worst_drop = drawdown_model(current_price, sim_run)
+            worst_price = current_price * (1 - worst_drop)
+
+            # Calculate safe loan size
+            max_loan = collateral_btc * worst_price * 0.75
+            loan_amount = max(max_loan * 0.5, simulator.min_loan)
+
+            # Simulate cycle outcome
+            cycle_result = simulator.simulate_cycle(
+                current_price, collateral_btc, loan_amount, 
+                lambda p, c=None: worst_drop  # Use the sampled drawdown
+            )
+
+            if cycle_result["liquidation_occurred"]:
+                simulation_liquidated = True
+                liquidation_count += 1
+                break
+
+            # Update state
+            free_btc += cycle_result["net_btc_gain"]
+            current_price = cycle_result["exit_price"]
+
+        # Record result
+        if free_btc >= btc_goal:
+            success_count += 1
+            results.append({
+                'simulation': sim_run,
+                'outcome': 'SUCCESS',
+                'final_btc': free_btc,
+                'cycles': cycle,
+                'liquidated': simulation_liquidated
+            })
+        else:
+            results.append({
+                'simulation': sim_run,
+                'outcome': 'FAILURE',
+                'final_btc': free_btc,
+                'cycles': cycle,
+                'liquidated': simulation_liquidated
+            })
+
+    # Calculate statistics
+    success_rate = (success_count / num_simulations) * 100
+    liquidation_rate = (liquidation_count / num_simulations) * 100
+
+    print(f"\n📊 MONTE CARLO RESULTS ({num_simulations} simulations)")
+    print("=" * 50)
+    print(f"✅ Success Rate: {success_rate:.1f}%")
+    print(f"💥 Liquidation Rate: {liquidation_rate:.1f}%")
+    print(f"🎯 Strategy Viability: {'VIABLE' if success_rate > 70 else 'HIGH RISK' if success_rate > 30 else 'NOT VIABLE'}")
+
+    return pd.DataFrame(results)
+
+def create_probabilistic_drawdown_model(historical_data=None):
+    """Wrapper to maintain backward compatibility - redirects to true Monte Carlo."""
+    return create_true_monte_carlo_drawdown_model(historical_data)
 
 def fit_drawdown_model(draw_df: pd.DataFrame):
     """Fit a probabilistic drawdown model based on historical crash patterns."""
     print("📊 Using probabilistic drawdown model based on Bitcoin crash history")
-    
+
     # Create probabilistic model that samples from historical distributions
     probabilistic_model = create_probabilistic_drawdown_model(draw_df)
-    
+
     # If we have historical data, show comparison
     if len(draw_df) >= 10:
         historical_worst = abs(draw_df.draw.min())  # Most negative (worst) drawdown
         historical_95th = np.percentile(np.abs(draw_df.draw), 95)
         historical_median = np.percentile(np.abs(draw_df.draw), 50)
-        
+
         print(f"📈 Historical data shows:")
         print(f"   • Worst observed drawdown: {historical_worst:.1%}")
         print(f"   • 95th percentile drawdown: {historical_95th:.1%}")
         print(f"   • Median drawdown: {historical_median:.1%}")
-        
+
         # Test the probabilistic model with a few samples
         test_price = draw_df.price.median()
         print(f"🎲 Probabilistic model samples at ${test_price:,.0f}:")
@@ -255,7 +329,7 @@ def fit_drawdown_model(draw_df: pd.DataFrame):
             print(f"   Sample {i+1}: {sample_draw:.1%}")
     else:
         print("⚠️  Limited historical data - using built-in crash distribution")
-    
+
     return probabilistic_model
 
 def generate_realistic_price_scenarios(start_price: float, years: int = 5) -> dict:
@@ -426,11 +500,11 @@ def simulate_price_path(start_price: float, target_price: float, days: int) -> n
     """DEPRECATED: Generate realistic price path - use simulate_realistic_cycle_outcome instead."""
     print("⚠️  WARNING: Using deprecated optimistic price model")
     print("⚠️  This function should not be used - switching to realistic modeling")
-    
+
     # Return a simple linear path as fallback, but warn heavily
     if days <= 1:
         return np.array([start_price, target_price])
-    
+
     # Just return linear interpolation as emergency fallback
     return np.linspace(start_price, target_price, days)
 
@@ -741,7 +815,7 @@ class LoanSimulator:
             margin_call_occurred = False
             liquidation_fee = total_loan_balance * self.processing_fee_rate
             final_loan_balance = total_loan_balance + liquidation_fee
-            
+
             # In liquidation, lose most collateral
             net_btc_gain = -collateral_btc * 0.8  # Lose 80% of collateral
             cure_btc_needed = 0
@@ -750,16 +824,16 @@ class LoanSimulator:
             btc_sold_at_exit = 0
             strategy = "liquidated"
             total_interest = 0
-            
+
         elif selected_scenario["outcome"] == "MARGIN_CALL":
             liquidation_occurred = False
             margin_call_occurred = True
-            
+
             # Calculate cure requirements
             target_ltv = self.baseline_ltv
             required_collateral = total_loan_balance / (target_ltv * worst_price)
             cure_btc_needed = max(0, required_collateral - collateral_btc)
-            
+
             # Assume we can cure and continue
             if cure_btc_needed < collateral_btc * 0.5:  # If cure is feasible
                 exit_price = entry_price * 1.05  # Modest 5% gain after cure
@@ -767,7 +841,7 @@ class LoanSimulator:
                 monthly_payment = self.calculate_monthly_payment(total_loan_balance)
                 total_interest = monthly_payment * (expected_days / 30)
                 final_loan_balance = total_loan_balance + total_interest
-                
+
                 btc_purchased = loan_amount / entry_price
                 avg_price = (entry_price + exit_price) / 2
                 btc_sold_during_cycle = total_interest / avg_price
@@ -785,21 +859,21 @@ class LoanSimulator:
                 btc_purchased = loan_amount / entry_price
                 btc_sold_during_cycle = 0
                 btc_sold_at_exit = 0
-                
+
         else:
             # Normal scenarios: SUCCESSFUL_EXIT or BREAK_EVEN
             liquidation_occurred = False
             margin_call_occurred = False
             cure_btc_needed = 0
-            
+
             # Determine payment strategy based on scenario performance
             deferred_interest = self.calculate_deferred_interest(total_loan_balance, expected_days)
             final_loan_balance_deferred = total_loan_balance + deferred_interest
             exit_ltv_deferred = self.calculate_ltv(final_loan_balance_deferred, collateral_btc, exit_price)
-            
+
             monthly_payment = self.calculate_monthly_payment(total_loan_balance)
             total_monthly_interest = monthly_payment * (expected_days / 30)
-            
+
             # Choose strategy: defer if exit LTV manageable
             if exit_ltv_deferred < 0.70:  # More conservative threshold
                 strategy = "deferred"
@@ -812,7 +886,7 @@ class LoanSimulator:
                 final_loan_balance = total_loan_balance + total_interest
                 avg_price = (entry_price + exit_price) / 2
                 btc_sold_during_cycle = total_interest / avg_price
-            
+
             # Calculate BTC flows
             btc_purchased = loan_amount / entry_price
             btc_sold_at_exit = final_loan_balance / exit_price
