@@ -1,0 +1,46 @@
+🚀 Starting Accurate Bitcoin Collateral Lending Simulation
+============================================================
+📁 Export directory: exports/simulation_20250730_164704
+============================================================
+⚠️  nasdaq-data-link not installed
+📈 Tier 2: Trying Kraken API...
+✅ Kraken successful: 720 days
+📊 Loaded 720 days of price data
+📈 Analyzed 516 historical recovery cycles
+📊 Using conservative drawdown model based on Bitcoin crash history
+📈 Historical data shows:
+   • Worst observed drawdown: 26.2%
+   • 95th percentile drawdown: 22.2%
+💡 Conservative model at $60,714: expects 82.5% maximum drawdown
+⚠️  Conservative model predicts worse crashes: 82.5%
+   This is intentional for risk management
+💡 Conservative model at $118,000: expects 86.2% maximum drawdown
+💰 Initial loan amount: $10,000
+🪙 Initial collateral: 0.1200 BTC
+📉 Expected worst drawdown: 86.2%
+💡 Conservative model at $118,000: expects 86.2% maximum drawdown
+🎲 Simulating realistic outcomes for 6-month cycle starting at $118,000
+🎲 Selected scenario: sideways - Choppy sideways movement
+   Outcome: BREAK_EVEN, Price: $113,158
+📊 Cycle 1: $113,158 → $113,158, BTC: 0.1031, Strategy: monthly_payments
+💡 Conservative model at $113,158: expects 86.2% maximum drawdown
+🎲 Simulating realistic outcomes for 6-month cycle starting at $113,158
+🎲 Selected scenario: decline - Gradual decline
+   Outcome: LIQUIDATION, Price: $94,470
+💥 LIQUIDATION in cycle 2 - simulation terminated
+💾 Saved cycles log: exports/simulation_20250730_164704/cycles_log.csv
+📊 Saved analysis plot: exports/simulation_20250730_164704/simulation_analysis.png
+
+============================================================
+📊 SIMULATION SUMMARY
+============================================================
+💰 Final BTC Holdings: 0.0000 BTC
+🔄 Total Cycles: 2
+⏱️  Total Time: 360 days (1.0 years)
+💸 Total Interest Paid: $594
+📊 Average Interest Rate: 3.0%
+🔵 Deferred Interest Cycles: 0
+🔴 Monthly Payment Cycles: 1
+⚠️  Margin Calls: 0
+💥 Liquidations: 1
+❌ Goal not reached. Strategy may not be viable.
