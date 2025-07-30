@@ -1058,10 +1058,10 @@ def main():
     # Initialize simulation
     simulator = LoanSimulator()
 
-    # Starting conditions
-    start_btc = 0.24
+    # Starting conditions - Testing viable scenario #2
+    start_btc = 0.50
     start_price = 118000.0
-    btc_goal = 1.0
+    btc_goal = 0.81
 
     # Calculate initial loan amount using contract terms
     initial_collateral = start_btc * 0.6  # Use 60% as collateral, keep 40% as buffer
