@@ -1,5 +1,5 @@
 
-# Data Research Request for Bitcoin Loan Simulation (Updated January 2025)
+# Data Research Request for Bitcoin Loan Simulation (Updated July 2025)
 
 ## Development Environment Context
 - **Platform**: Replit (Linux/Nix environment)
@@ -7,7 +7,7 @@
 - **Libraries**: pandas, numpy, matplotlib, requests
 - **Project**: Bitcoin-backed lending strategy simulation
 
-## Current Problem (January 2025)
+## Current Problem (July 2025)
 I'm running a Bitcoin loan simulation (`leverage_sim.py`) that models a sophisticated lending strategy using historical BTC price data. Both primary data sources are now failing:
 
 1. **CoinGecko API**: Returns 401 Unauthorized (they may have changed their free tier policies)
@@ -19,7 +19,7 @@ I'm running a Bitcoin loan simulation (`leverage_sim.py`) that models a sophisti
 ```
 
 ## Updated Data Requirements for 2025
-Please research current (January 2025) solutions for:
+Please research current (July 2025) solutions for:
 
 ### 1. CoinGecko API Fixes
 - Has CoinGecko changed their free tier in 2025?
@@ -28,7 +28,7 @@ Please research current (January 2025) solutions for:
 - Alternative CoinGecko endpoints that still work without auth?
 
 ### 2. Current Working Bitcoin APIs (2025)
-Research APIs that are currently working in January 2025:
+Research APIs that are currently working in July 2025:
 - **Binance Public API** (historical klines)
 - **Coinbase Pro API** (historical rates)
 - **Alpha Vantage** (crypto endpoints)
@@ -57,7 +57,7 @@ def load_btc_history() -> pd.Series:
 
 ## Expected Output
 Please provide:
-1. **Current working API** (as of January 2025)
+1. **Current working API** (as of July 2025)
 2. **Complete Python code** with proper error handling
 3. **Rate limiting strategy** to avoid 401/429 errors
 4. **Backup methods** if primary API fails
@@ -65,7 +65,7 @@ Please provide:
 
 ## Success Criteria
 - Fetches real Bitcoin daily prices from 2015+ (minimum)
-- Works in Replit environment (January 2025)
+- Works in Replit environment (July 2025)
 - Handles rate limits gracefully
 - No complex authentication if possible
 - Returns pandas Series with datetime index
@@ -73,4 +73,4 @@ Please provide:
 ## Additional Context
 The simulation needs at least 1,000+ days of historical data to fit the drawdown model properly. Synthetic data works but real data would make the lending strategy analysis much more accurate.
 
-Please prioritize solutions that are currently working as of January 2025 and account for recent API policy changes.
+Please prioritize solutions that are currently working as of July 2025 and account for recent API policy changes.
