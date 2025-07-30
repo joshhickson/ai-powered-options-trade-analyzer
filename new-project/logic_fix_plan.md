@@ -80,7 +80,7 @@ def calculate_cycle_time(start_price, target_price, historical_data):
 ```python
 def calculate_monthly_payment(principal, apr):
     """Calculate monthly interest-only payment"""
-    # For $10K loan at 12.615% APR (scaling from $30K contract)
+    # For $10K loan at 11.5% APR (minimum available rate)
     monthly_rate = apr / 12
     return principal * monthly_rate
 
@@ -314,11 +314,13 @@ def test_parameter_sensitivity():
 Based on the Figure Lending contract analysis:
 
 ### Critical Financial Terms:
-- **Principal**: $10,000 (scaled from $30K contract)
-- **APR**: 12.615% (from contract, not 11.5% as originally planned)
+- **Principal**: $10,000 (minimum loan amount available)
+- **APR**: 11.5% (minimum rate for $10K loan, not 12.615% from $30K contract)
 - **Term**: 12 months maximum
-- **Monthly Payment**: ~$105.13 (interest-only, scales from $295.95)
-- **Origination Fee**: $100 (scales from $300, added to principal)
+- **Monthly Payment**: ~$95.83 (interest-only: $10,000 × 11.5% ÷ 12)
+- **Origination Fee**: ~$333 (estimated based on contract scaling, added to principal)
+
+**Note**: The $30K contract at 12.615% APR provides the operational framework (LTV ratios, margin call procedures, etc.), but the financial terms scale down for the minimum $10K loan at 11.5% APR.
 
 ### LTV Management Rules:
 - **Baseline LTV**: 75% maximum
@@ -344,7 +346,7 @@ Based on the Figure Lending contract analysis:
 - No monthly cash flow requirements
 
 ### After Fixes:
-- **Realistic borrowing costs**: 12.615% APR with monthly payments
+- **Realistic borrowing costs**: 11.5% APR with monthly payments ($95.83/month)
 - **LTV risk management**: Daily monitoring with margin calls
 - **Cash flow modeling**: Monthly BTC sales for interest payments
 - **Liquidation risk**: Proper 85%/90% LTV trigger modeling
