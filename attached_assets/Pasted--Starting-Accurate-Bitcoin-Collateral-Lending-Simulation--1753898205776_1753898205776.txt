@@ -1,0 +1,107 @@
+🚀 Starting Accurate Bitcoin Collateral Lending Simulation
+============================================================
+📁 Export directory: exports/simulation_20250730_175502
+============================================================
+⚠️  nasdaq-data-link not installed
+📈 Tier 2: Trying Kraken API...
+✅ Kraken successful: 720 days
+📊 Loaded 720 days of price data
+📈 Analyzed 516 historical recovery cycles
+📊 Using data-driven drawdown model based on actual Bitcoin history
+📈 Historical data analysis:
+   • Worst observed drawdown: 26.2%
+   • 95th percentile drawdown: 22.2%
+   • Mean drawdown: 8.4%
+   • Median drawdown: 7.1%
+🎲 Data-driven model sampling from 516 historical cycles at $60,714:
+🎲 Monte Carlo Run #1: 2.0% drawdown at $60,714
+   Scenario: Historical data sample
+🎲 Monte Carlo Run #2: 4.8% drawdown at $60,714
+   Scenario: Historical data sample
+🎲 Monte Carlo Run #3: 2.0% drawdown at $60,714
+   Scenario: Historical data sample
+✅ Model will sample from actual historical distribution instead of assumptions
+💰 Initial loan amount: $10,289
+🪙 Initial collateral: 0.1440 BTC
+📉 Expected worst drawdown: 13.5%
+🎲 Simulating realistic outcomes for 6-month cycle starting at $118,000
+🎲 Selected scenario: sideways - Choppy sideways movement
+   Outcome: BREAK_EVEN, Price: $104,861
+📊 Cycle 1: $104,861 → $104,861, BTC: 0.0712, Strategy: monthly_payments
+🎲 Simulating realistic outcomes for 6-month cycle starting at $104,861
+🎲 Selected scenario: moderate_growth - Steady upward trend
+   Outcome: SUCCESSFUL_EXIT, Price: $118,081
+📊 Cycle 2: $118,081 → $118,081, BTC: 0.0740, Strategy: deferred
+🎲 Simulating realistic outcomes for 6-month cycle starting at $118,081
+🎲 Selected scenario: moderate_growth - Steady upward trend
+   Outcome: SUCCESSFUL_EXIT, Price: $132,969
+📊 Cycle 3: $132,969 → $132,969, BTC: 0.0765, Strategy: deferred
+🎲 Simulating realistic outcomes for 6-month cycle starting at $132,969
+🎲 Selected scenario: moderate_growth - Steady upward trend
+   Outcome: SUCCESSFUL_EXIT, Price: $149,734
+📊 Cycle 4: $149,734 → $149,734, BTC: 0.0787, Strategy: deferred
+🎲 Simulating realistic outcomes for 6-month cycle starting at $149,734
+🎲 Selected scenario: decline - Gradual decline
+   Outcome: BREAK_EVEN, Price: $129,135
+📊 Cycle 5: $129,135 → $129,135, BTC: 0.0608, Strategy: deferred
+🎲 Simulating realistic outcomes for 6-month cycle starting at $129,135
+🎲 Selected scenario: sideways - Choppy sideways movement
+   Outcome: BREAK_EVEN, Price: $114,756
+📊 Cycle 6: $114,756 → $114,756, BTC: 0.0430, Strategy: deferred
+🎲 Simulating realistic outcomes for 6-month cycle starting at $114,756
+🎲 Selected scenario: decline - Gradual decline
+   Outcome: BREAK_EVEN, Price: $98,969
+📊 Cycle 7: $98,969 → $98,969, BTC: 0.0142, Strategy: monthly_payments
+🎲 Simulating realistic outcomes for 6-month cycle starting at $98,969
+🎲 Selected scenario: moderate_growth - Steady upward trend
+   Outcome: SUCCESSFUL_EXIT, Price: $111,447
+📊 Cycle 8: $111,447 → $111,447, BTC: 0.0171, Strategy: deferred
+🎲 Simulating realistic outcomes for 6-month cycle starting at $111,447
+🎲 Selected scenario: moderate_growth - Steady upward trend
+   Outcome: SUCCESSFUL_EXIT, Price: $125,498
+📊 Cycle 9: $125,498 → $125,498, BTC: 0.0197, Strategy: deferred
+🎲 Simulating realistic outcomes for 6-month cycle starting at $125,498
+🎲 Selected scenario: moderate_growth - Steady upward trend
+   Outcome: SUCCESSFUL_EXIT, Price: $141,321
+📊 Cycle 10: $141,321 → $141,321, BTC: 0.0221, Strategy: deferred
+🎲 Simulating realistic outcomes for 6-month cycle starting at $141,321
+🎲 Selected scenario: decline - Gradual decline
+   Outcome: BREAK_EVEN, Price: $121,880
+📊 Cycle 11: $121,880 → $121,880, BTC: 0.0031, Strategy: deferred
+🎲 Simulating realistic outcomes for 6-month cycle starting at $121,880
+🎲 Selected scenario: sideways - Choppy sideways movement
+   Outcome: BREAK_EVEN, Price: $108,308
+📊 Cycle 12: $108,308 → $108,308, BTC: -0.0209, Strategy: monthly_payments
+🎲 Simulating realistic outcomes for 6-month cycle starting at $108,308
+🎲 Selected scenario: decline - Gradual decline
+   Outcome: BREAK_EVEN, Price: $93,409
+📊 Cycle 13: $93,409 → $93,409, BTC: -0.0514, Strategy: monthly_payments
+🎲 Simulating realistic outcomes for 6-month cycle starting at $93,409
+🎲 Selected scenario: sideways - Choppy sideways movement
+   Outcome: BREAK_EVEN, Price: $83,007
+📊 Cycle 14: $83,007 → $83,007, BTC: -0.0826, Strategy: monthly_payments
+🎲 Simulating realistic outcomes for 6-month cycle starting at $83,007
+🎲 Selected scenario: bull_run - Strong bull market
+   Outcome: LIQUIDATION, Price: $117,986
+💥 LIQUIDATION in cycle 15 - simulation terminated
+💾 Saved cycles log: exports/simulation_20250730_175502/cycles_log.csv
+📊 Saved analysis plot: exports/simulation_20250730_175502/simulation_analysis.png
+
+============================================================
+📊 SIMULATION SUMMARY
+============================================================
+💰 Final BTC Holdings: 0.0000 BTC
+🔄 Total Cycles: 15
+⏱️  Total Time: 2700 days (7.4 years)
+💸 Total Interest Paid: $8,394
+📊 Average Interest Rate: 5.6%
+🔵 Deferred Interest Cycles: 9
+🔴 Monthly Payment Cycles: 5
+⚠️  Margin Calls: 0
+💥 Liquidations: 1
+❌ Goal not reached. Strategy may not be viable.
+
+📁 All files saved to: exports/simulation_20250730_175502
+   • cycles_log.csv - Detailed cycle data
+   • simulation_analysis.png - Visual analysis
+   • simulation_summary.txt - Text summary
