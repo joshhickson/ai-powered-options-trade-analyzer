@@ -21,47 +21,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Try to import yfinance; fall back to CSV if offline
-try:
-    import yfinance as yf
-    ONLINE = True
-except ImportError:
-    ONLINE = False
-    print("⚠️  yfinance not found. Using synthetic data.")
 
-def generate_synthetic_btc_data():
-    """Generate synthetic BTC price data for simulation when real data fails."""
-    print("🔄 Generating synthetic BTC price data for simulation...")
 
-    # Create 5 years of daily data
-    dates = pd.date_range(start='2019-01-01', end='2024-01-01', freq='D')
 
-    # Generate realistic BTC price progression with volatility
-    np.random.seed(42)  # For reproducible results
-    n_days = len(dates)
-
-    # Start at $4000, trend upward to ~$100k with realistic volatility
-    trend = np.linspace(4000, 100000, n_days)
-    volatility = np.random.normal(0, 0.04, n_days)  # 4% daily volatility
-
-    # Apply cumulative volatility
-    price_changes = np.exp(np.cumsum(volatility))
-    prices = trend * price_changes
-
-    # Add some realistic crashes and recoveries
-    crash_points = [int(n_days * 0.3), int(n_days * 0.6), int(n_days * 0.8)]
-    for crash_idx in crash_points:
-        if crash_idx < len(prices):
-            crash_magnitude = np.random.uniform(0.3, 0.7)  # 30-70% crash
-            recovery_days = 200
-            end_idx = min(crash_idx + recovery_days, len(prices))
-
-            # Apply crash and gradual recovery
-            for i in range(crash_idx, end_idx):
-                recovery_factor = (i - crash_idx) / recovery_days
-                prices[i] *= (crash_magnitude + (1 - crash_magnitude) * recovery_factor)
-
-    return pd.Series(prices, index=dates, name='Close')
 
 def load_btc_history() -> pd.Series:
     """Load Bitcoin price history with fallbacks using US-compliant APIs."""
@@ -151,46 +113,9 @@ def load_btc_history() -> pd.Series:
     except Exception as e:
         print(f"⚠️  Kraken API failed: {e}")
 
-    # Method 3: yfinance (if available)
-    if ONLINE:
-        try:
-            print("📡 Tier 4: Trying yfinance...")
-            btc = yf.download("BTC-USD", start="2015-01-01", progress=False)
-            if not btc.empty and 'Adj Close' in btc.columns:
-                prices = btc["Adj Close"].dropna()
-                if len(prices) >= 100:
-                    print(f"✅ yfinance successful: {len(prices)} days")
-                    return prices
-        except Exception as e:
-            print(f"⚠️  yfinance failed: {e}")
-
-    # Method 4: Local CSV fallback
-    try:
-        csv_files = ["btc_history_backup.csv", "btc_history.csv"]
-        for csv_file in csv_files:
-            if os.path.exists(csv_file):
-                print(f"📂 Loading BTC data from {csv_file}...")
-                df = pd.read_csv(csv_file, index_col=0, parse_dates=True)
-
-                # Try different column names
-                price_col = None
-                for col in ['Close', 'close', 'price', 'Price']:
-                    if col in df.columns:
-                        price_col = col
-                        break
-
-                if price_col:
-                    btc_series = df[price_col].astype(float).dropna()
-                    btc_series.index = pd.to_datetime(btc_series.index)
-                    print(f"✅ Successfully loaded {len(btc_series)} days from CSV")
-                    return btc_series
-
-    except Exception as e:
-        print(f"⚠️  CSV loading failed: {e}")
-
-    # Method 5: Synthetic data (last resort)
-    print("📊 All real data sources failed, using synthetic data...")
-    return generate_synthetic_btc_data()
+    # All data sources failed
+    print("❌ All data sources failed - unable to load Bitcoin price data")
+    raise Exception("No Bitcoin price data available from any source")
 
 def worst_drop_until_recovery(price_series: pd.Series, jump: float = 30000.0) -> pd.DataFrame:
     """
