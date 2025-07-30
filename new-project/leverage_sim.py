@@ -367,7 +367,7 @@ class LoanSimulator:
 def setup_export_directory():
     """Create timestamped export directory."""
     timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    export_dir = Path("new-project/exports") / f"simulation_{timestamp}"
+    export_dir = Path("exports") / f"simulation_{timestamp}"
     export_dir.mkdir(parents=True, exist_ok=True)
     return export_dir
 
