@@ -1,0 +1,58 @@
+~/workspace/new-project$ python3 leverage_sim.py
+🚀 Starting Accurate Bitcoin Collateral Lending Simulation
+============================================================
+📁 Export directory: exports/simulation_20250730_181306
+============================================================
+⚠️  nasdaq-data-link not installed
+📈 Tier 2: Trying Kraken API...
+✅ Kraken successful: 720 days
+📊 Loaded 720 days of price data
+📈 Analyzed 516 historical recovery cycles
+📊 Using data-driven drawdown model based on actual Bitcoin history
+📈 Historical data analysis:
+   • Worst observed drawdown: 26.2%
+   • 95th percentile drawdown: 22.2%
+   • Mean drawdown: 8.4%
+   • Median drawdown: 7.1%
+🎲 Data-driven model sampling from 516 historical cycles at $60,714:
+🎲 Monte Carlo Run #1: 4.5% drawdown at $60,714
+   Scenario: Historical data sample
+🎲 Monte Carlo Run #2: 4.4% drawdown at $60,714
+   Scenario: Historical data sample
+🎲 Monte Carlo Run #3: 20.9% drawdown at $60,714
+   Scenario: Historical data sample
+✅ Model will sample from actual historical distribution instead of assumptions
+💰 Initial loan amount: $22,339
+🪙 Initial collateral: 0.3000 BTC
+📉 Expected worst drawdown: 9.8%
+
+🔍 STRATEGY VIABILITY CHECK:
+   Status: ✅ VIABLE
+   Reason: Estimated 5.9 cycles, 2.4% annual interest burden
+   Recommendation: Proceed with caution. Max safe loan: $12,390
+🎲 Simulating realistic outcomes for 6-month cycle starting at $118,000
+🎲 Cycle 1: Selected scenario: decline - Gradual decline
+   Random value: 0.917, Probability: 20.0%
+   Outcome: LIQUIDATION, Price: $101,767
+💥 LIQUIDATION in cycle 1 - simulation terminated
+💾 Saved cycles log: exports/simulation_20250730_181306/cycles_log.csv
+📊 Saved analysis plot: exports/simulation_20250730_181306/simulation_analysis.png
+
+============================================================
+📊 SIMULATION SUMMARY
+============================================================
+💰 Final BTC Holdings: 0.0000 BTC
+🔄 Total Cycles: 1
+⏱️  Total Time: 180 days (0.5 years)
+💸 Total Interest Paid: $0
+📊 Average Interest Rate: 0.0%
+🔵 Deferred Interest Cycles: 0
+🔴 Monthly Payment Cycles: 0
+⚠️  Margin Calls: 0
+💥 Liquidations: 1
+❌ Goal not reached. Strategy may not be viable.
+
+📁 All files saved to: exports/simulation_20250730_181306
+   • cycles_log.csv - Detailed cycle data
+   • simulation_analysis.png - Visual analysis
+   • simulation_summary.txt - Text summary
