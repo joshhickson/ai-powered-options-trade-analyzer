@@ -5,6 +5,19 @@
 
 While the original plan addressed many issues, **new critical problems** have been discovered from actual simulation runs:
 
+### 0. 🔴 **CRITICAL: NameError - Undefined Variables**
+**Status**: **IMMEDIATE FIX NEEDED**
+- **Issue**: `NameError: name 'worst_case_drop' is not defined` on line 1075
+- **Root cause**: Variable referenced before being calculated/defined
+- **Impact**: Simulation crashes immediately, preventing any analysis
+
+**Required Fix**:
+```python
+# Remove or properly define worst_case_drop before use
+# Line 1075: print(f"📉 Expected worst drawdown: {worst_case_drop:.1%}")
+# Either calculate worst_case_drop earlier or remove this print statement
+```
+
 ### 1. 🔴 **CRITICAL: Negative BTC Holdings (MATHEMATICALLY IMPOSSIBLE)**
 **Status**: **URGENT FIX NEEDED**
 - Simulation continues running with negative BTC holdings (-0.0209, -0.0514, -0.0826 BTC)
@@ -154,7 +167,39 @@ For maximum real-world accuracy:
 - **Accurate**: Compare to simple DCA, holding, other strategies
 - **Honest**: Show opportunity cost of complex leverage vs simple approaches
 
+## 🆕 **ADDITIONAL ISSUES FROM LATEST RUN (January 30, 2025)**
+
+### 1. 🔴 **CRITICAL: Simulation Can't Start Due to Code Errors**
+**Status**: **BLOCKING ALL TESTING**
+- **Issue**: NameError prevents simulation from running at all
+- **Observation**: Code reached data loading successfully (720 days, 516 cycles) but crashes on undefined variable
+- **Impact**: Cannot validate any other fixes until basic code errors are resolved
+
+### 2. 🟠 **DATA LOADING SUCCESS (Positive)**
+**Status**: **WORKING CORRECTLY**
+- ✅ Kraken API successfully loaded 720 days of data
+- ✅ Historical analysis working: 516 recovery cycles identified
+- ✅ Realistic drawdown statistics: 26.2% worst, 8.4% mean, 7.1% median
+- ✅ Monte Carlo sampling from historical data (3.4%, 17.9%, 2.1% samples shown)
+
+### 3. 🟡 **FIXED LOAN PARAMETERS IMPLEMENTED**
+**Status**: **AS REQUESTED**
+- ✅ Fixed $10,000 loan amount
+- ✅ Fixed 0.12 BTC collateral requirement  
+- 🔍 **Need to verify**: Strategy math with these fixed parameters
+
+### 4. 🔴 **POTENTIAL: Incomplete Variable Initialization**
+**Status**: **NEEDS INVESTIGATION**
+- **Issue**: `worst_case_drop` undefined suggests incomplete refactoring
+- **Risk**: Other variables may also be undefined/incorrectly scoped
+- **Recommendation**: Full variable audit needed
+
 ## 🔧 **IMMEDIATE FIXES NEEDED**
+
+### Priority 0 (BLOCKING):
+1. **Fix NameError for worst_case_drop** - Remove or properly define
+2. **Audit all variable definitions** - Ensure no other undefined references
+3. **Test basic simulation flow** - Verify code can complete one cycle
 
 ### Priority 1 (Critical):
 1. **Fix negative BTC bug** - Add termination conditions
@@ -190,8 +235,10 @@ For maximum real-world accuracy:
 3. **Add comprehensive stress testing** under worst-case scenarios
 4. **Include honest risk warnings** about strategy limitations
 
-**Current status: SIMULATION NOT SUITABLE FOR REAL-WORLD DECISIONS** due to critical bugs and unrealistic parameters.
+**Current status: SIMULATION CANNOT RUN** due to basic code errors (NameError) blocking all testing and analysis.
 
-**Post-fix status target: REALISTIC RISK ASSESSMENT TOOL** that honestly shows both opportunities and substantial risks of Bitcoin-backed lending strategies.
+**Immediate target: FUNCTIONAL SIMULATION** that can complete basic cycles without crashing.
+
+**Long-term target: REALISTIC RISK ASSESSMENT TOOL** that honestly shows both opportunities and substantial risks of Bitcoin-backed lending strategies.
 
 The goal should be a simulator that **discourages** overly risky strategies and **encourages** only well-capitalized, conservative approaches that can survive multiple Bitcoin crash cycles.

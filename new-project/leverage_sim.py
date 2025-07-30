@@ -1072,7 +1072,6 @@ def main():
 
     print(f"💰 Initial loan amount: ${initial_loan:,.0f}")
     print(f"🪙 Initial collateral: {initial_collateral:.4f} BTC")
-    print(f"📉 Expected worst drawdown: {worst_case_drop:.1%}")
     
     # VALIDATE STRATEGY VIABILITY UPFRONT
     viability_check = simulator.validate_strategy_viability(start_btc, start_price, btc_goal)
