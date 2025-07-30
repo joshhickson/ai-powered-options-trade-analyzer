@@ -16,6 +16,7 @@ import datetime as dt
 import math
 import os
 import sys
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -385,9 +386,21 @@ class LoanSimulator:
             "exit_ltv": self.calculate_ltv(final_loan_balance, collateral_btc - cure_btc_needed, exit_price)
         }
 
+def setup_export_directory():
+    """Create timestamped export directory."""
+    timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    export_dir = Path("new-project/exports") / f"simulation_{timestamp}"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    return export_dir
+
 def main():
     """Run the improved Bitcoin lending simulation."""
     print("🚀 Starting Accurate Bitcoin Collateral Lending Simulation")
+    print("=" * 60)
+    
+    # Create timestamped export directory
+    export_dir = setup_export_directory()
+    print(f"📁 Export directory: {export_dir}")
     print("=" * 60)
 
     # Load price data
@@ -486,7 +499,11 @@ def main():
     # Save and analyze results
     if results:
         df = pd.DataFrame(results)
-        df.to_csv("cycles_log.csv", index=False)
+        
+        # Save to timestamped export directory
+        cycles_csv = export_dir / "cycles_log.csv"
+        df.to_csv(cycles_csv, index=False)
+        print(f"💾 Saved cycles log: {cycles_csv}")
 
         # Generate plots
         plt.figure(figsize=(12, 8))
@@ -525,7 +542,11 @@ def main():
         plt.legend()
 
         plt.tight_layout()
-        plt.savefig("simulation_analysis.png", dpi=150, bbox_inches='tight')
+        
+        # Save plots to export directory
+        analysis_plot = export_dir / "simulation_analysis.png"
+        plt.savefig(analysis_plot, dpi=150, bbox_inches='tight')
+        print(f"📊 Saved analysis plot: {analysis_plot}")
 
         # Print summary
         print("\n" + "=" * 60)
@@ -558,7 +579,31 @@ def main():
         else:
             print(f"❌ Goal not reached. Strategy may not be viable.")
 
-        print(f"\nFiles saved: cycles_log.csv, simulation_analysis.png")
+        # Create summary report
+        summary_file = export_dir / "simulation_summary.txt"
+        with open(summary_file, 'w') as f:
+            f.write("Bitcoin Collateral Lending Simulation Summary\n")
+            f.write("=" * 50 + "\n\n")
+            f.write(f"Export Date: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            f.write(f"Final BTC Holdings: {final_btc:.4f} BTC\n")
+            f.write(f"Total Cycles: {total_cycles}\n")
+            f.write(f"Total Time: {total_days:.0f} days ({total_days/365:.1f} years)\n")
+            f.write(f"Total Interest Paid: ${total_interest:,.0f}\n")
+            f.write(f"Average Interest Rate: {100*total_interest/total_loans:.1f}%\n")
+            f.write(f"Deferred Interest Cycles: {deferred_cycles}\n")
+            f.write(f"Monthly Payment Cycles: {monthly_cycles}\n")
+            f.write(f"Margin Calls: {margin_calls}\n")
+            f.write(f"Liquidations: {liquidations}\n\n")
+            
+            if final_btc >= btc_goal:
+                f.write(f"✅ SUCCESS: Goal of {btc_goal} BTC achieved!\n")
+            else:
+                f.write(f"❌ Goal not reached. Strategy may not be viable.\n")
+
+        print(f"\n📁 All files saved to: {export_dir}")
+        print(f"   • cycles_log.csv - Detailed cycle data")
+        print(f"   • simulation_analysis.png - Visual analysis")
+        print(f"   • simulation_summary.txt - Text summary")
 
     else:
         print("❌ No cycles completed - strategy failed immediately")
