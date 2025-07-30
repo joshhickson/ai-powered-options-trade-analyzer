@@ -793,7 +793,9 @@ class LoanSimulator:
         )
 
         # Choose scenario based on probabilities (use weighted random selection)
-        np.random.seed(int(entry_price) % 1000)  # Deterministic but varied
+        # Use cycle number and price for better randomness
+        seed_val = int((entry_price * cycle_number * 1000) % 100000)
+        np.random.seed(seed_val)
         rand_val = np.random.random()
         cumulative_prob = 0
         selected_scenario = None
@@ -1022,6 +1024,18 @@ def main():
     print(f"💰 Initial loan amount: ${initial_loan:,.0f}")
     print(f"🪙 Initial collateral: {initial_collateral:.4f} BTC")
     print(f"📉 Expected worst drawdown: {worst_case_drop:.1%}")
+    
+    # VALIDATE STRATEGY VIABILITY UPFRONT
+    viability_check = simulator.validate_strategy_viability(start_btc, start_price, btc_goal)
+    print(f"\n🔍 STRATEGY VIABILITY CHECK:")
+    print(f"   Status: {'✅ VIABLE' if viability_check['viable'] else '❌ NOT VIABLE'}")
+    print(f"   Reason: {viability_check['reason']}")
+    print(f"   Recommendation: {viability_check['recommendation']}")
+    
+    if not viability_check['viable']:
+        print(f"\n🛑 ABORTING SIMULATION - Strategy is not mathematically viable")
+        print(f"   Please adjust parameters based on recommendations above")
+        return
 
     # Simulation state
     free_btc = start_btc - initial_collateral
@@ -1063,6 +1077,18 @@ def main():
         free_btc += btc_change
         collateral_btc -= cycle_result["cure_btc_needed"]  # BTC moved to cure margin call
         current_price = cycle_result["exit_price"]
+        
+        # CRITICAL: Check for negative BTC (impossible scenario)
+        if free_btc < 0:
+            print(f"🚨 CRITICAL ERROR: Negative BTC holdings detected ({free_btc:.4f} BTC)")
+            print(f"   This indicates the strategy has failed - terminating simulation")
+            break
+            
+        # Check for insufficient capital to continue
+        if free_btc < 0.01:  # Less than 0.01 BTC remaining
+            print(f"⚠️  Insufficient BTC to continue strategy ({free_btc:.4f} BTC remaining)")
+            print(f"   Strategy has effectively failed - terminating simulation")
+            break
 
         # Add tracking info
         cycle_result["cycle"] = cycle
