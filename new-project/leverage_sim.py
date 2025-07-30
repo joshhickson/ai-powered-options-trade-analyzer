@@ -373,35 +373,14 @@ def simulate_realistic_cycle_outcome(start_price: float, loan_size: float,
 def simulate_price_path(start_price: float, target_price: float, days: int) -> np.ndarray:
     """DEPRECATED: Generate realistic price path - use simulate_realistic_cycle_outcome instead."""
     print("⚠️  WARNING: Using deprecated optimistic price model")
-    print("⚠️  This assumes guaranteed price appreciation which is unrealistic")
-    print("⚠️  Consider using simulate_realistic_cycle_outcome() for better modeling")
-
+    print("⚠️  This function should not be used - switching to realistic modeling")
+    
+    # Return a simple linear path as fallback, but warn heavily
     if days <= 1:
         return np.array([start_price, target_price])
-
-    # Much more conservative path generation with high volatility
-    total_return = np.log(target_price / start_price)
-    drift = total_return / days
-
-    # Very high volatility to reflect Bitcoin reality
-    np.random.seed(42)
-    dt = 1.0
-    volatility = 0.085  # 8.5% daily volatility (very high)
-    random_shocks = np.random.normal(0, volatility * np.sqrt(dt), days - 1)
-
-    log_returns = drift + random_shocks
-    log_prices = np.log(start_price) + np.cumsum(np.concatenate([[0], log_returns]))
-    prices = np.exp(log_prices)
-
-    # Add realistic crashes during the period
-    crash_probability = 0.1  # 10% chance of 30%+ crash during period
-    if np.random.random() < crash_probability:
-        crash_day = np.random.randint(days // 4, 3 * days // 4)
-        crash_magnitude = np.random.uniform(0.3, 0.6)  # 30-60% crash
-        prices[crash_day:] *= (1 - crash_magnitude)
-        print(f"💥 Simulated {crash_magnitude:.1%} crash on day {crash_day}")
-
-    return prices
+    
+    # Just return linear interpolation as emergency fallback
+    return np.linspace(start_price, target_price, days)
 
 class LoanSimulator:
     def __init__(self):
@@ -668,76 +647,124 @@ class LoanSimulator:
 
     def simulate_cycle(self, entry_price: float, collateral_btc: float, 
                       loan_amount: float, drawdown_model) -> dict:
-        """Simulate one complete loan cycle with realistic dynamics."""
+        """Simulate one complete loan cycle using realistic market scenarios."""
 
         # Add origination fee to loan balance
         origination_fee = loan_amount * self.origination_fee_rate
         total_loan_balance = loan_amount + origination_fee
 
-        # Predict cycle duration (simplified model)
-        # Higher prices generally take longer to appreciate by fixed amounts
-        base_days = 120  # 4 months base
-        price_factor = max(0.5, min(2.0, entry_price / 70000))  # Scale with price level
-        expected_days = int(base_days * price_factor)
+        # Use realistic scenario modeling instead of optimistic price paths
+        cycle_months = 6  # Standard 6-month cycle
+        realistic_outcomes = simulate_realistic_cycle_outcome(
+            entry_price, loan_amount, collateral_btc, cycle_months
+        )
 
-        # Generate price path
-        exit_price = entry_price + self.exit_jump
-        price_path = simulate_price_path(entry_price, exit_price, expected_days)
+        # Choose scenario based on probabilities (use weighted random selection)
+        np.random.seed(int(entry_price) % 1000)  # Deterministic but varied
+        rand_val = np.random.random()
+        cumulative_prob = 0
+        selected_scenario = None
 
-        # Determine payment strategy
-        # Use deferred interest if expected LTV at exit remains manageable
-        deferred_interest = self.calculate_deferred_interest(total_loan_balance, expected_days)
-        final_loan_balance_deferred = total_loan_balance + deferred_interest
-        exit_ltv_deferred = self.calculate_ltv(final_loan_balance_deferred, collateral_btc, exit_price)
+        for outcome in realistic_outcomes:
+            cumulative_prob += outcome["probability"]
+            if rand_val <= cumulative_prob:
+                selected_scenario = outcome
+                break
 
-        # Calculate monthly payment strategy impact
-        monthly_payment = self.calculate_monthly_payment(total_loan_balance)
-        num_payments = expected_days / 30
-        total_monthly_interest = monthly_payment * num_payments
+        if selected_scenario is None:
+            selected_scenario = realistic_outcomes[-1]  # Fallback to last scenario
 
-        # Choose strategy: defer if exit LTV < 75%, otherwise pay monthly
-        if exit_ltv_deferred < 0.75:
-            strategy = "deferred"
-            total_interest = deferred_interest
-            final_loan_balance = final_loan_balance_deferred
-            btc_sold_during_cycle = 0  # No monthly sales
-        else:
-            strategy = "monthly_payments"
-            total_interest = total_monthly_interest
-            final_loan_balance = total_loan_balance + total_interest
-            # Approximate BTC sold for monthly payments
-            avg_price = (entry_price + exit_price) / 2
-            btc_sold_during_cycle = total_monthly_interest / avg_price
+        print(f"🎲 Selected scenario: {selected_scenario['scenario']} - {selected_scenario['description']}")
+        print(f"   Outcome: {selected_scenario['outcome']}, Price: ${selected_scenario['final_price']:,.0f}")
 
-        # Check for margin calls during cycle
-        worst_expected_drawdown = drawdown_model(entry_price)
-        worst_price = entry_price * (1 - worst_expected_drawdown)
+        # Use scenario results
+        exit_price = selected_scenario["final_price"]
+        worst_price = selected_scenario["worst_price"] 
+        worst_ltv = selected_scenario["worst_ltv"]
+        expected_days = cycle_months * 30
 
-        margin_call_occurred = False
-        liquidation_occurred = False
-        cure_btc_needed = 0
-
-        # Check if margin call would occur at worst drawdown
-        effective_collateral = collateral_btc - btc_sold_during_cycle / 2  # Average impact
-        worst_ltv = self.calculate_ltv(total_loan_balance, effective_collateral, worst_price)
-
-        if worst_ltv >= self.liquidation_ltv:
+        # Determine what happened based on scenario outcome
+        if selected_scenario["outcome"] == "LIQUIDATION":
             liquidation_occurred = True
+            margin_call_occurred = False
             liquidation_fee = total_loan_balance * self.processing_fee_rate
-            final_loan_balance += liquidation_fee
-        elif worst_ltv >= self.margin_call_ltv:
+            final_loan_balance = total_loan_balance + liquidation_fee
+            
+            # In liquidation, lose most collateral
+            net_btc_gain = -collateral_btc * 0.8  # Lose 80% of collateral
+            cure_btc_needed = 0
+            btc_purchased = loan_amount / entry_price
+            btc_sold_during_cycle = 0
+            btc_sold_at_exit = 0
+            strategy = "liquidated"
+            total_interest = 0
+            
+        elif selected_scenario["outcome"] == "MARGIN_CALL":
+            liquidation_occurred = False
             margin_call_occurred = True
-            # Calculate additional BTC needed to cure
+            
+            # Calculate cure requirements
             target_ltv = self.baseline_ltv
             required_collateral = total_loan_balance / (target_ltv * worst_price)
-            cure_btc_needed = max(0, required_collateral - effective_collateral)
-
-        # Calculate BTC flows
-        btc_purchased = loan_amount / entry_price  # Initial purchase with loan proceeds
-        btc_sold_at_exit = final_loan_balance / exit_price  # Sell to repay loan
-
-        # Net BTC change
-        net_btc_gain = btc_purchased - btc_sold_at_exit - btc_sold_during_cycle - cure_btc_needed
+            cure_btc_needed = max(0, required_collateral - collateral_btc)
+            
+            # Assume we can cure and continue
+            if cure_btc_needed < collateral_btc * 0.5:  # If cure is feasible
+                exit_price = entry_price * 1.05  # Modest 5% gain after cure
+                strategy = "monthly_payments"  # Forced to pay monthly after margin call
+                monthly_payment = self.calculate_monthly_payment(total_loan_balance)
+                total_interest = monthly_payment * (expected_days / 30)
+                final_loan_balance = total_loan_balance + total_interest
+                
+                btc_purchased = loan_amount / entry_price
+                avg_price = (entry_price + exit_price) / 2
+                btc_sold_during_cycle = total_interest / avg_price
+                btc_sold_at_exit = final_loan_balance / exit_price
+                net_btc_gain = btc_purchased - btc_sold_at_exit - btc_sold_during_cycle - cure_btc_needed
+            else:
+                # Can't cure - becomes liquidation
+                liquidation_occurred = True
+                margin_call_occurred = False
+                net_btc_gain = -collateral_btc * 0.8
+                cure_btc_needed = 0
+                strategy = "liquidated"
+                total_interest = 0
+                final_loan_balance = total_loan_balance
+                btc_purchased = loan_amount / entry_price
+                btc_sold_during_cycle = 0
+                btc_sold_at_exit = 0
+                
+        else:
+            # Normal scenarios: SUCCESSFUL_EXIT or BREAK_EVEN
+            liquidation_occurred = False
+            margin_call_occurred = False
+            cure_btc_needed = 0
+            
+            # Determine payment strategy based on scenario performance
+            deferred_interest = self.calculate_deferred_interest(total_loan_balance, expected_days)
+            final_loan_balance_deferred = total_loan_balance + deferred_interest
+            exit_ltv_deferred = self.calculate_ltv(final_loan_balance_deferred, collateral_btc, exit_price)
+            
+            monthly_payment = self.calculate_monthly_payment(total_loan_balance)
+            total_monthly_interest = monthly_payment * (expected_days / 30)
+            
+            # Choose strategy: defer if exit LTV manageable
+            if exit_ltv_deferred < 0.70:  # More conservative threshold
+                strategy = "deferred"
+                total_interest = deferred_interest
+                final_loan_balance = final_loan_balance_deferred
+                btc_sold_during_cycle = 0
+            else:
+                strategy = "monthly_payments"
+                total_interest = total_monthly_interest
+                final_loan_balance = total_loan_balance + total_interest
+                avg_price = (entry_price + exit_price) / 2
+                btc_sold_during_cycle = total_interest / avg_price
+            
+            # Calculate BTC flows
+            btc_purchased = loan_amount / entry_price
+            btc_sold_at_exit = final_loan_balance / exit_price
+            net_btc_gain = btc_purchased - btc_sold_at_exit - btc_sold_during_cycle
 
         return {
             "entry_price": entry_price,
@@ -749,7 +776,7 @@ class LoanSimulator:
             "payment_strategy": strategy,
             "total_interest": total_interest,
             "final_loan_balance": final_loan_balance,
-            "interest_rate_effective": (total_interest / loan_amount) * 100,
+            "interest_rate_effective": (total_interest / loan_amount) * 100 if loan_amount > 0 else 0,
             "btc_purchased": btc_purchased,
             "btc_sold_during_cycle": btc_sold_during_cycle,
             "btc_sold_at_exit": btc_sold_at_exit,
@@ -757,9 +784,11 @@ class LoanSimulator:
             "net_btc_gain": net_btc_gain,
             "margin_call_occurred": margin_call_occurred,
             "liquidation_occurred": liquidation_occurred,
-            "worst_expected_drawdown": worst_expected_drawdown,
+            "worst_expected_drawdown": selected_scenario["worst_drawdown"],
             "worst_ltv": worst_ltv,
-            "exit_ltv": self.calculate_ltv(final_loan_balance, collateral_btc - cure_btc_needed, exit_price)
+            "exit_ltv": self.calculate_ltv(final_loan_balance, collateral_btc - cure_btc_needed, exit_price),
+            "scenario_name": selected_scenario["scenario"],
+            "scenario_description": selected_scenario["description"]
         }
 
 def setup_export_directory():
