@@ -14,7 +14,20 @@ payoff = loan + loan * params["loan_rate"]  # 1-yr APR lump
 - Interest is always calculated as zero
 - Payoff assumes exactly 1 year regardless of actual cycle time
 
-**Impact**: Massively underestimates borrowing costs, making strategy appear more profitable than reality
+**Real Contract Analysis (Figure Lending $30K @ 12.615% APR)**:
+- **Daily Interest Accrual**: Interest accrues daily at APR/365 (or 366 in leap years)
+- **Interest-Only Monthly Payments**: $295.95/month for 11 months
+- **Balloon Payment**: Full $30,300 principal + accrued interest at month 12
+- **No Prepayment Penalty**: Can pay off early without fees
+- **Loan-to-Value (LTV) Management**:
+  - Maximum LTV: 75% (loan baseline)
+  - Margin call trigger: 85% LTV (48 hours to cure)
+  - Force liquidation: 90% LTV (immediate)
+  - Collateral release possible: <35% LTV for 7+ days
+
+**Key Insight**: The simulation needs to account for monthly interest payments PLUS the risk of forced liquidation during market downturns, not just end-of-cycle interest.
+
+**Impact**: Current model massively underestimates both borrowing costs AND liquidation risk
 
 ### 2. **Unrealistic Price Movement Model**
 **Current Problem**:
@@ -63,14 +76,38 @@ def calculate_cycle_time(start_price, target_price, historical_data):
     # Return expected days + volatility
 ```
 
-#### Step 1.2: Implement Proper Interest Accrual
+#### Step 1.2: Implement Realistic Interest Structure (Based on Figure Lending Contract)
 ```python
-def calculate_interest(principal, rate, days):
-    """Calculate compound interest for actual holding period"""
-    if days <= 0:
-        return 0
-    daily_rate = rate / 365
+def calculate_monthly_payment(principal, apr):
+    """Calculate monthly interest-only payment"""
+    # For $10K loan at 12.615% APR (scaling from $30K contract)
+    monthly_rate = apr / 12
+    return principal * monthly_rate
+
+def calculate_daily_interest_accrual(principal, apr, days):
+    """Calculate daily compound interest as per contract terms"""
+    daily_rate = apr / 365  # Contract specifies 365-day year
     return principal * ((1 + daily_rate) ** days - 1)
+
+def check_ltv_triggers(loan_balance, collateral_value):
+    """Monitor LTV levels for margin calls and liquidations"""
+    ltv = loan_balance / collateral_value
+    
+    if ltv >= 0.90:
+        return "FORCE_LIQUIDATION"  # Immediate sale
+    elif ltv >= 0.85:
+        return "MARGIN_CALL"  # 48 hours to add collateral
+    elif ltv <= 0.35:
+        return "COLLATERAL_RELEASE_ELIGIBLE"  # Can withdraw excess
+    else:
+        return "NORMAL"
+
+def simulate_monthly_interest_burden(principal, apr, btc_price_path):
+    """Simulate the cash flow impact of monthly interest payments"""
+    monthly_payment = calculate_monthly_payment(principal, apr)
+    # This requires selling BTC each month to make payments
+    # Reduces available collateral and increases liquidation risk
+    return monthly_payment
 ```
 
 ### Phase 2: Implement Realistic Price Movement
@@ -93,7 +130,53 @@ def simulate_price_path(start_price, target_price, volatility):
     # Return full price path, not just endpoints
 ```
 
-### Phase 3: Fix Margin Call Logic
+### Phase 3: Implement Realistic LTV Management (Critical New Finding)
+
+#### Step 3.0: Model Monthly Interest Payment Impact
+```python
+def simulate_interest_payment_impact(btc_holdings, monthly_payment, btc_price):
+    """Model how monthly interest payments reduce collateral"""
+    # Each month, must sell BTC to make interest payment
+    btc_sold_for_interest = monthly_payment / btc_price
+    remaining_btc = btc_holdings - btc_sold_for_interest
+    
+    # This reduces collateral, increasing LTV ratio over time
+    # Creates compounding liquidation risk
+    return remaining_btc, btc_sold_for_interest
+
+def model_ltv_drift(initial_ltv, monthly_payment, btc_volatility, time_months):
+    """Model how LTV drifts due to interest payments + volatility"""
+    # LTV increases from interest payments (selling collateral)
+    # LTV fluctuates with BTC price volatility
+    # Need to model probability of hitting 85%/90% triggers
+```
+
+#### Step 3.1: Daily LTV Monitoring System
+```python
+def daily_ltv_check(loan_balance, collateral_btc, btc_price, day):
+    """Check LTV status every day of simulation"""
+    collateral_value = collateral_btc * btc_price
+    current_ltv = loan_balance / collateral_value
+    
+    # Log all margin call events, not just end-of-cycle
+    if current_ltv >= 0.90:
+        return trigger_force_liquidation(collateral_btc, loan_balance)
+    elif current_ltv >= 0.85:
+        return trigger_margin_call(day)
+    
+    return current_ltv
+
+def trigger_margin_call(day):
+    """Model 48-hour cure period for margin calls"""
+    # User has 48 hours to:
+    # 1. Add more BTC collateral, OR
+    # 2. Partially pay down loan
+    # If neither happens -> force liquidation
+    cure_deadline = day + 2
+    return {"type": "margin_call", "cure_deadline": cure_deadline}
+```
+
+### Phase 4: Fix Margin Call Logic
 
 #### Step 3.1: Dynamic Margin Call Modeling
 ```python
@@ -226,6 +309,30 @@ def test_parameter_sensitivity():
     # Identify which assumptions matter most
 ```
 
+## Key Contract Terms That Must Be Modeled
+
+Based on the Figure Lending contract analysis:
+
+### Critical Financial Terms:
+- **Principal**: $10,000 (scaled from $30K contract)
+- **APR**: 12.615% (from contract, not 11.5% as originally planned)
+- **Term**: 12 months maximum
+- **Monthly Payment**: ~$105.13 (interest-only, scales from $295.95)
+- **Origination Fee**: $100 (scales from $300, added to principal)
+
+### LTV Management Rules:
+- **Baseline LTV**: 75% maximum
+- **Margin Call**: 85% LTV (48-hour cure period)
+- **Force Liquidation**: 90% LTV (immediate, 2% processing fee)
+- **Collateral Release**: Available when <35% LTV for 7+ consecutive days
+
+### Daily Operational Model Required:
+1. **Daily interest accrual** on outstanding balance
+2. **Monthly interest payments** (requires selling BTC)
+3. **Daily LTV monitoring** for margin calls
+4. **Cure period management** (48 hours to respond to margin calls)
+5. **Liquidation modeling** (immediate at 90% LTV)
+
 ## Expected Impact of Fixes
 
 ### Before Fixes:
@@ -233,13 +340,23 @@ def test_parameter_sensitivity():
 - Zero interest costs
 - Deterministic worst-case scenarios
 - Fixed reserve ratios
+- No LTV management
+- No monthly cash flow requirements
 
 ### After Fixes:
-- Realistic borrowing costs included
-- Probabilistic risk modeling
-- Time-aware price movements
-- Adaptive risk management
-- Validated model assumptions
+- **Realistic borrowing costs**: 12.615% APR with monthly payments
+- **LTV risk management**: Daily monitoring with margin calls
+- **Cash flow modeling**: Monthly BTC sales for interest payments
+- **Liquidation risk**: Proper 85%/90% LTV trigger modeling
+- **Time-aware price movements**: Accounts for actual market dynamics
+- **Validated model assumptions**: Based on real contract terms
+
+### Critical Realization:
+The monthly interest payments create a **compounding liquidation risk** because:
+1. Each month requires selling BTC to make interest payment
+2. This reduces collateral, increasing LTV ratio
+3. During bear markets, this accelerates toward liquidation
+4. Strategy may be fundamentally unprofitable due to this dynamic
 
 ## Success Metrics
 
