@@ -1,4 +1,3 @@
-
 # Bitcoin Collateral Lending Investment Strategy
 
 ## 📋 **STRATEGY OVERVIEW**
@@ -68,28 +67,34 @@ Expected Gain: ~0.018 BTC
 - Loan amounts **increase geometrically** with BTC accumulation
 - Gains accelerate due to larger loan sizes
 
-## 📊 **LOAN-TO-COLLATERAL RATIO ANALYSIS**
+## 📊 **LOAN-TO-COLLATERAL RATIO ANALYSIS** (Based on Figure Lending Contract)
 
 ### **Critical Ratio Determination**
-The loan-to-collateral ratio determines both:
-1. **Leverage Efficiency**: Higher ratios = more BTC purchased per cycle
-2. **Liquidation Risk**: Higher ratios = less safety margin
+Based on the Figure Lending contract analysis, the loan-to-collateral ratios are constrained by:
+- **Maximum LTV**: 75% (LTV Baseline Ratio per contract)
+- **Margin Call**: 85% LTV (48-hour cure period)
+- **Liquidation**: 90% LTV (immediate forced liquidation)
+- **Collateral Release**: 35% LTV (can request excess back after 7 days)
 
-### **Ratio Testing Framework**
+### **Contract-Compliant Ratio Framework**
 ```python
-# Test different ratios for optimal risk/reward
-test_ratios = [1.2, 1.3, 1.4, 1.5, 1.6, 1.7]
-for ratio in test_ratios:
-    loan_amount = collateral_btc * btc_price * ratio
-    liquidation_price = loan_amount / (collateral_btc * 0.90)
-    safety_margin = (btc_price - liquidation_price) / btc_price
-    # Optimal ratio maximizes loans while maintaining >40% safety margin
+# Figure Lending contract ratios (fixed by contract terms)
+baseline_ltv = 0.75  # 75% maximum normal operations
+margin_call_ltv = 0.85  # 85% margin call trigger
+liquidation_ltv = 0.90  # 90% liquidation trigger
+
+# Calculate max safe loan per contract
+max_loan_amount = collateral_btc * btc_price * 0.75  # 75% LTV max
+safety_buffer = collateral_btc * btc_price * 0.10   # 10% buffer to margin call
+recommended_loan = max_loan_amount - safety_buffer   # ~65% LTV for safety
 ```
 
-### **Expected Ratio Performance**
-- **1.4:1 Ratio**: Conservative, ~35% liquidation buffer
-- **1.5:1 Ratio**: Balanced, ~25% liquidation buffer  
-- **1.6:1 Ratio**: Aggressive, ~15% liquidation buffer
+### **Contract-Based Ratio Performance**
+- **65% LTV Ratio**: Conservative, 20% buffer to margin call, 25% to liquidation
+- **70% LTV Ratio**: Balanced, 15% buffer to margin call, 20% to liquidation  
+- **75% LTV Ratio**: Maximum allowed, 10% buffer to margin call, 15% to liquidation
+
+**Note**: All ratios above are LTV percentages, not loan-to-collateral multipliers. The contract fixes these ratios regardless of loan size.
 
 ## 🏦 **LENDING PLATFORM INTEGRATION** (Figure Lending)
 
