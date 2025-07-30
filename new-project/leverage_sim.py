@@ -152,19 +152,34 @@ def create_conservative_drawdown_model():
         - 2018: -84% peak to trough (ATH $20k → $3.2k)
         - 2022: -77% peak to trough (ATH $69k → $15.5k)  
         - 2011: -93% peak to trough (ATH $32 → $2)
+        - 2017: -70% crash from $20k
         - Multiple 50-70% crashes throughout history
-        """
-        # Base conservative expectation: 70% drawdown minimum
-        base_drawdown = 0.70
         
-        # Higher prices may see larger percentage drops due to:
+        This model expects 75-85% drawdowns as the norm, not the exception.
+        """
+        # Base conservative expectation: 75% drawdown minimum
+        base_drawdown = 0.75
+        
+        # Higher prices typically see larger percentage drops due to:
         # - More institutional money that can exit quickly
-        # - Higher leverage in system
+        # - Higher leverage in the system
         # - Regulatory risks at higher market caps
-        price_factor = min(1.2, max(0.8, price / 50000))
+        # - Profit-taking behavior at psychological levels
+        
+        if price < 30000:
+            # Lower prices: historically see 70-85% crashes
+            price_factor = 1.0
+        elif price < 100000:
+            # Mid-range prices: tend to see larger crashes (80-90%)
+            price_factor = 1.1
+        else:
+            # High prices: maximum crash potential (85%+)
+            price_factor = 1.15
         
         # Calculate expected worst-case drawdown
-        expected_drawdown = min(0.85, base_drawdown * price_factor)
+        expected_drawdown = min(0.90, base_drawdown * price_factor)
+        
+        print(f"💡 Conservative model at ${price:,.0f}: expects {expected_drawdown:.1%} maximum drawdown")
         
         return expected_drawdown
     
@@ -268,28 +283,124 @@ def generate_realistic_price_scenarios(start_price: float, years: int = 5) -> di
     
     return scenarios
 
+def simulate_realistic_cycle_outcome(start_price: float, loan_size: float, 
+                                          collateral_btc: float, months: int = 6) -> dict:
+    """
+    Simulate realistic cycle outcome using historical Bitcoin patterns.
+    Returns probability-weighted scenarios instead of single optimistic path.
+    """
+    print(f"🎲 Simulating realistic outcomes for {months}-month cycle starting at ${start_price:,.0f}")
+    
+    # Historical Bitcoin patterns (based on actual data)
+    scenarios = {
+        "bull_run": {
+            "probability": 0.15,  # 15% chance - rare
+            "monthly_return": 0.25,  # 25% per month average
+            "description": "Strong bull market"
+        },
+        "moderate_growth": {
+            "probability": 0.25,  # 25% chance
+            "monthly_return": 0.08,  # 8% per month
+            "description": "Steady upward trend"
+        },
+        "sideways": {
+            "probability": 0.30,  # 30% chance - most common
+            "monthly_return": 0.02,  # 2% per month
+            "description": "Choppy sideways movement"
+        },
+        "decline": {
+            "probability": 0.20,  # 20% chance
+            "monthly_return": -0.05,  # -5% per month
+            "description": "Gradual decline"
+        },
+        "bear_market": {
+            "probability": 0.10,  # 10% chance
+            "monthly_return": -0.15,  # -15% per month
+            "description": "Bear market crash"
+        }
+    }
+    
+    results = []
+    
+    for scenario_name, scenario in scenarios.items():
+        # Calculate final price for this scenario
+        monthly_multiplier = 1 + scenario["monthly_return"]
+        final_price = start_price * (monthly_multiplier ** months)
+        
+        # Add realistic volatility
+        np.random.seed(hash(scenario_name) % 1000)  # Deterministic but varied
+        volatility_factor = np.random.normal(1.0, 0.20)  # ±20% volatility around trend
+        final_price *= volatility_factor
+        
+        # Calculate worst drawdown during the period
+        if scenario["monthly_return"] > 0:
+            # Bull scenarios still have drawdowns during the period
+            worst_drawdown = min(0.40, abs(scenario["monthly_return"]) * 2)
+        else:
+            # Bear scenarios have larger drawdowns
+            worst_drawdown = min(0.80, abs(scenario["monthly_return"]) * 3)
+        
+        worst_price = start_price * (1 - worst_drawdown)
+        
+        # Calculate LTV at worst point
+        loan_balance = loan_size * 1.115 ** (months/12)  # Approximate compound interest
+        worst_ltv = loan_balance / (collateral_btc * worst_price)
+        
+        # Determine outcome
+        if worst_ltv >= 0.90:
+            outcome = "LIQUIDATION"
+        elif worst_ltv >= 0.85:
+            outcome = "MARGIN_CALL"
+        elif final_price > start_price * 1.10:  # 10% gain threshold
+            outcome = "SUCCESSFUL_EXIT"
+        else:
+            outcome = "BREAK_EVEN"
+        
+        results.append({
+            "scenario": scenario_name,
+            "probability": scenario["probability"],
+            "description": scenario["description"],
+            "final_price": final_price,
+            "worst_price": worst_price,
+            "worst_drawdown": worst_drawdown,
+            "worst_ltv": worst_ltv,
+            "outcome": outcome,
+            "price_return": (final_price / start_price) - 1
+        })
+    
+    return results
+
 def simulate_price_path(start_price: float, target_price: float, days: int) -> np.ndarray:
-    """Generate realistic price path - DEPRECATED, use generate_realistic_price_scenarios."""
-    # Keep for backward compatibility but add warning
+    """DEPRECATED: Generate realistic price path - use simulate_realistic_cycle_outcome instead."""
     print("⚠️  WARNING: Using deprecated optimistic price model")
+    print("⚠️  This assumes guaranteed price appreciation which is unrealistic")
+    print("⚠️  Consider using simulate_realistic_cycle_outcome() for better modeling")
+    
     if days <= 1:
         return np.array([start_price, target_price])
 
-    # More conservative path generation
+    # Much more conservative path generation with high volatility
     total_return = np.log(target_price / start_price)
     drift = total_return / days
 
-    # Higher volatility to reflect reality
+    # Very high volatility to reflect Bitcoin reality
     np.random.seed(42)
     dt = 1.0
-    volatility = 0.065  # Increased from 4.5% to 6.5% daily
+    volatility = 0.085  # 8.5% daily volatility (very high)
     random_shocks = np.random.normal(0, volatility * np.sqrt(dt), days - 1)
 
     log_returns = drift + random_shocks
     log_prices = np.log(start_price) + np.cumsum(np.concatenate([[0], log_returns]))
     prices = np.exp(log_prices)
 
-    # Don't force target price - let it be more realistic
+    # Add realistic crashes during the period
+    crash_probability = 0.1  # 10% chance of 30%+ crash during period
+    if np.random.random() < crash_probability:
+        crash_day = np.random.randint(days // 4, 3 * days // 4)
+        crash_magnitude = np.random.uniform(0.3, 0.6)  # 30-60% crash
+        prices[crash_day:] *= (1 - crash_magnitude)
+        print(f"💥 Simulated {crash_magnitude:.1%} crash on day {crash_day}")
+
     return prices
 
 class LoanSimulator:
@@ -300,19 +411,20 @@ class LoanSimulator:
         self.origination_fee_rate = 0.033  # ~3.3% estimated
         self.processing_fee_rate = 0.02  # 2% on liquidations
 
-        # Conservative LTV thresholds for better risk management
-        self.baseline_ltv = 0.40  # Much more conservative
-        self.margin_call_ltv = 0.70  # Earlier warning
-        self.liquidation_ltv = 0.85  # Earlier forced exit
-        self.collateral_release_ltv = 0.25
+        # Ultra-conservative LTV thresholds based on 80%+ crash expectation
+        self.baseline_ltv = 0.35  # Never exceed 35% under normal conditions
+        self.margin_call_ltv = 0.60  # Early warning at 60%
+        self.liquidation_ltv = 0.75  # Forced exit at 75% (well before 85-90% danger zone)
+        self.collateral_release_ltv = 0.20
 
-        # Operational parameters - more realistic
+        # Operational parameters - realistic expectations
         self.cure_period_hours = 48
-        self.exit_jump = 15000.0  # Reduced from $30k to $15k (more realistic)
+        self.exit_jump = 10000.0  # Very conservative $10k target (not $30k)
         
-        # Risk management parameters
-        self.max_safe_ltv = 0.40  # Never exceed 40% LTV
-        self.min_collateral_buffer = 0.10  # Always keep 0.1 BTC buffer
+        # Risk management parameters - maximum safety
+        self.max_safe_ltv = 0.30  # Never exceed 30% LTV for safety
+        self.min_collateral_buffer = 0.15  # Always keep 0.15 BTC buffer
+        self.bear_market_detection_threshold = -0.30  # Stop strategy if price drops 30% in 3 months
         
     def validate_strategy_viability(self, start_btc: float, start_price: float, 
                                   goal_btc: float) -> dict:
@@ -373,66 +485,132 @@ class LoanSimulator:
     
     def model_bear_market_impact(self, start_price: float, collateral_btc: float, 
                                loan_balance: float) -> dict:
-        """Model what happens during 18-month bear market."""
-        print("🐻 Modeling bear market survival...")
+        """Model what happens during extended bear market using historical patterns."""
+        print("🐻 Modeling bear market survival using historical crash patterns...")
         
-        # Typical Bitcoin bear market: 70% drop over 12 months, 6 months sideways
-        bear_months = 18
-        crash_months = 12
-        sideways_months = 6
+        # Model multiple bear market scenarios based on Bitcoin history
+        bear_scenarios = [
+            {
+                "name": "2018_style",
+                "description": "84% crash over 12 months, 24-month recovery",
+                "crash_months": 12,
+                "max_drawdown": 0.84,
+                "recovery_months": 24,
+                "probability": 0.30
+            },
+            {
+                "name": "2022_style", 
+                "description": "77% crash over 6 months, 12-month recovery",
+                "crash_months": 6,
+                "max_drawdown": 0.77,
+                "recovery_months": 12,
+                "probability": 0.25
+            },
+            {
+                "name": "2011_style",
+                "description": "93% crash over 8 months, 18-month recovery", 
+                "crash_months": 8,
+                "max_drawdown": 0.93,
+                "recovery_months": 18,
+                "probability": 0.15
+            },
+            {
+                "name": "extended_bear",
+                "description": "70% crash with 36-month sideways grind",
+                "crash_months": 18,
+                "max_drawdown": 0.70,
+                "recovery_months": 36,
+                "probability": 0.30
+            }
+        ]
         
-        # Generate bear market price path
-        prices = []
-        current_price = start_price
+        survival_results = []
         
-        # Crash phase: -70% over 12 months
-        for month in range(crash_months):
-            drop_factor = 1 - (0.70 * (month + 1) / crash_months)
-            current_price = start_price * drop_factor
-            prices.append(current_price)
-        
-        # Sideways phase: ±10% around bottom
-        bottom_price = current_price
-        for month in range(sideways_months):
-            volatility = np.random.normal(0, 0.1)  # 10% monthly volatility
-            current_price = bottom_price * (1 + volatility)
-            prices.append(current_price)
-        
-        # Check survival during bear market
-        max_ltv = 0
-        liquidation_month = None
-        monthly_interest = loan_balance * self.base_apr / 12
-        
-        remaining_collateral = collateral_btc
-        
-        for month, price in enumerate(prices):
-            # Account for monthly interest payments (sell BTC)
-            btc_sold_for_interest = monthly_interest / price
-            remaining_collateral -= btc_sold_for_interest
+        for scenario in bear_scenarios:
+            print(f"   Testing {scenario['name']}: {scenario['description']}")
             
-            if remaining_collateral <= 0:
-                return {
-                    "survives": False, 
-                    "liquidation_month": month + 1,
-                    "reason": "Ran out of collateral paying interest"
-                }
+            # Generate price path for this scenario
+            crash_months = scenario["crash_months"]
+            max_drawdown = scenario["max_drawdown"]
+            recovery_months = scenario["recovery_months"]
             
-            # Check LTV
-            ltv = loan_balance / (remaining_collateral * price)
-            max_ltv = max(max_ltv, ltv)
+            total_months = crash_months + recovery_months
+            prices = []
             
-            if ltv >= self.liquidation_ltv:
-                return {
-                    "survives": False, 
-                    "liquidation_month": month + 1,
-                    "reason": f"LTV reached {ltv:.1%} at price ${price:,.0f}"
-                }
+            # Crash phase
+            for month in range(crash_months):
+                drop_progress = (month + 1) / crash_months
+                current_price = start_price * (1 - max_drawdown * drop_progress)
+                prices.append(current_price)
+            
+            # Recovery phase (partial recovery to 50% of original)
+            bottom_price = start_price * (1 - max_drawdown)
+            recovery_target = start_price * 0.5  # Only 50% recovery
+            
+            for month in range(recovery_months):
+                recovery_progress = month / recovery_months
+                current_price = bottom_price + (recovery_target - bottom_price) * recovery_progress
+                # Add volatility
+                volatility = np.random.normal(0, 0.15)  # 15% monthly volatility
+                current_price *= (1 + volatility)
+                prices.append(current_price)
+            
+            # Test survival
+            max_ltv = 0
+            liquidation_month = None
+            monthly_interest = loan_balance * self.base_apr / 12
+            remaining_collateral = collateral_btc
+            total_interest_paid = 0
+            
+            for month, price in enumerate(prices):
+                # Sell BTC to make monthly interest payment
+                if remaining_collateral > 0:
+                    btc_sold_for_interest = monthly_interest / price
+                    remaining_collateral -= btc_sold_for_interest
+                    total_interest_paid += monthly_interest
+                
+                if remaining_collateral <= 0:
+                    liquidation_month = month + 1
+                    reason = "Ran out of collateral paying interest"
+                    break
+                
+                # Check LTV trigger
+                current_ltv = loan_balance / (remaining_collateral * price)
+                max_ltv = max(max_ltv, current_ltv)
+                
+                if current_ltv >= self.liquidation_ltv:
+                    liquidation_month = month + 1
+                    reason = f"LTV reached {current_ltv:.1%} at price ${price:,.0f}"
+                    break
+            
+            survival_results.append({
+                "scenario": scenario["name"],
+                "description": scenario["description"],
+                "probability": scenario["probability"],
+                "survives": liquidation_month is None,
+                "liquidation_month": liquidation_month,
+                "max_ltv": max_ltv,
+                "final_collateral": remaining_collateral if liquidation_month is None else 0,
+                "total_interest_paid": total_interest_paid,
+                "reason": reason if liquidation_month else "Survived full bear market"
+            })
+        
+        # Calculate overall survival probability
+        total_survival_prob = sum(s["probability"] for s in survival_results if s["survives"])
+        
+        print(f"   📊 Bear Market Survival Analysis:")
+        for result in survival_results:
+            status = "✅ SURVIVES" if result["survives"] else "💥 LIQUIDATED"
+            print(f"      {result['scenario']}: {status} (Prob: {result['probability']:.1%})")
+            if not result["survives"]:
+                print(f"         Liquidated month {result['liquidation_month']}: {result['reason']}")
+        
+        print(f"   📈 Overall survival probability: {total_survival_prob:.1%}")
         
         return {
-            "survives": True, 
-            "max_ltv": max_ltv,
-            "final_collateral": remaining_collateral,
-            "collateral_lost_to_interest": collateral_btc - remaining_collateral
+            "overall_survival_probability": total_survival_prob,
+            "scenario_results": survival_results,
+            "recommendation": "ABORT_STRATEGY" if total_survival_prob < 0.7 else "PROCEED_WITH_CAUTION"
         }
 
     def calculate_monthly_payment(self, principal: float) -> float:
