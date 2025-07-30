@@ -1,0 +1,16 @@
+Bitcoin Collateral Lending Simulation Summary
+==================================================
+
+Export Date: 2025-07-30 16:56:31
+
+Final BTC Holdings: 0.0000 BTC
+Total Cycles: 1
+Total Time: 180 days (0.5 years)
+Total Interest Paid: $0
+Average Interest Rate: 0.0%
+Deferred Interest Cycles: 0
+Monthly Payment Cycles: 0
+Margin Calls: 0
+Liquidations: 1
+
+❌ Goal not reached. Strategy may not be viable.
