@@ -429,6 +429,9 @@ draw_df = worst_drop_until_recovery(prices)
 if len(draw_df) < 50:
     print(f"⚠️  Warning: Only {len(draw_df)} recovery cycles found. Results may be less reliable.")
 
+# Analyze historical price movements for realistic timing
+movement_stats = analyze_price_movements(prices, params["exit_jump"])
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Section 3 · Fit 99 th-percentile drawdown curve  draw99(price) = a·p^(-b)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -694,7 +697,185 @@ else:
                     return max(0.02, min(0.90, base))
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Section 4 · Helper functions (defined before usage)
+# Section 4 · Historical Price Movement Analysis
+# ──────────────────────────────────────────────────────────────────────────────
+def analyze_price_movements(price_series: pd.Series, jump_amount: float = 30000.0) -> dict:
+    """
+    Analyze historical Bitcoin price movements to predict realistic timing 
+    for future $30K appreciation cycles.
+    
+    Returns statistics on how long Bitcoin typically takes to appreciate 
+    by jump_amount from various starting price levels.
+    """
+    print(f"📊 Analyzing historical ${jump_amount:,.0f} price movements...")
+    
+    movements = []
+    dates = price_series.index
+    prices = price_series.values
+    n = len(prices)
+    
+    # Find all instances where price increased by jump_amount
+    for i in range(n - 1):
+        start_price = prices[i]
+        target_price = start_price + jump_amount
+        
+        # Look forward to find when target was reached
+        for j in range(i + 1, min(i + 365, n)):  # Max 1 year lookforward
+            if prices[j] >= target_price:
+                days_taken = j - i
+                start_date = dates[i]
+                end_date = dates[j]
+                
+                # Calculate statistics for this movement
+                max_price_during = np.max(prices[i:j+1])
+                min_price_during = np.min(prices[i:j+1])
+                end_price = prices[j]
+                
+                # Calculate rate of change (daily average)
+                daily_rate = (end_price - start_price) / days_taken
+                annualized_rate = daily_rate * 365 / start_price
+                
+                movements.append({
+                    'start_date': start_date,
+                    'end_date': end_date,
+                    'start_price': start_price,
+                    'end_price': end_price,
+                    'days_taken': days_taken,
+                    'daily_rate_usd': daily_rate,
+                    'annualized_rate_pct': annualized_rate * 100,
+                    'max_during_cycle': max_price_during,
+                    'min_during_cycle': min_price_during,
+                    'overshoot_amount': max_price_during - target_price,
+                    'price_range': start_price // 10000 * 10000  # Bin by $10K ranges
+                })
+                break
+    
+    if not movements:
+        print(f"⚠️  No ${jump_amount:,.0f} movements found in historical data")
+        return {
+            'avg_days': 180,  # Default assumption
+            'std_days': 60,
+            'movements_found': 0,
+            'price_range_stats': {}
+        }
+    
+    df = pd.DataFrame(movements)
+    
+    # Calculate statistics by price range
+    price_range_stats = {}
+    for price_range in sorted(df['price_range'].unique()):
+        range_data = df[df['price_range'] == price_range]
+        price_range_stats[price_range] = {
+            'count': len(range_data),
+            'avg_days': range_data['days_taken'].mean(),
+            'std_days': range_data['days_taken'].std(),
+            'median_days': range_data['days_taken'].median(),
+            'min_days': range_data['days_taken'].min(),
+            'max_days': range_data['days_taken'].max(),
+            'avg_daily_rate': range_data['daily_rate_usd'].mean(),
+            'success_rate': len(range_data) / len(df[df['start_price'] >= price_range])
+        }
+    
+    # Overall statistics
+    overall_stats = {
+        'movements_found': len(df),
+        'avg_days': df['days_taken'].mean(),
+        'std_days': df['days_taken'].std(),
+        'median_days': df['days_taken'].median(),
+        'price_range_stats': price_range_stats,
+        'recent_trend': df.tail(10)['days_taken'].mean() if len(df) >= 10 else df['days_taken'].mean()
+    }
+    
+    print(f"📈 Found {len(df)} historical ${jump_amount:,.0f} movements")
+    print(f"   Average time: {overall_stats['avg_days']:.0f} days ({overall_stats['avg_days']/30:.1f} months)")
+    print(f"   Median time: {overall_stats['median_days']:.0f} days")
+    print(f"   Range: {df['days_taken'].min():.0f} - {df['days_taken'].max():.0f} days")
+    
+    return overall_stats
+
+def predict_cycle_duration(start_price: float, movement_stats: dict, jump_amount: float = 30000.0) -> tuple:
+    """
+    Predict how long a $30K price appreciation will take based on 
+    historical patterns and current price level.
+    
+    Returns: (expected_days, confidence_interval_days)
+    """
+    if not movement_stats['price_range_stats']:
+        # Fallback to overall average
+        return movement_stats['avg_days'], movement_stats['std_days']
+    
+    # Find the closest price range
+    price_range = start_price // 10000 * 10000
+    
+    # Look for exact match first
+    if price_range in movement_stats['price_range_stats']:
+        stats = movement_stats['price_range_stats'][price_range]
+        return stats['avg_days'], stats['std_days']
+    
+    # Find nearest ranges and interpolate
+    available_ranges = sorted(movement_stats['price_range_stats'].keys())
+    
+    if start_price <= min(available_ranges):
+        # Use lowest range data
+        stats = movement_stats['price_range_stats'][min(available_ranges)]
+        return stats['avg_days'], stats['std_days']
+    elif start_price >= max(available_ranges):
+        # Extrapolate based on trend (higher prices typically take longer)
+        highest_range = max(available_ranges)
+        stats = movement_stats['price_range_stats'][highest_range]
+        
+        # Apply scaling factor for higher prices (diminishing returns effect)
+        scaling_factor = 1 + 0.1 * np.log(start_price / highest_range)
+        scaled_days = stats['avg_days'] * scaling_factor
+        
+        return scaled_days, stats['std_days'] * scaling_factor
+    else:
+        # Interpolate between two nearest ranges
+        lower_range = max([r for r in available_ranges if r <= price_range])
+        upper_range = min([r for r in available_ranges if r > price_range])
+        
+        lower_stats = movement_stats['price_range_stats'][lower_range]
+        upper_stats = movement_stats['price_range_stats'][upper_range]
+        
+        # Linear interpolation
+        weight = (start_price - lower_range) / (upper_range - lower_range)
+        interpolated_days = lower_stats['avg_days'] * (1 - weight) + upper_stats['avg_days'] * weight
+        interpolated_std = lower_stats['std_days'] * (1 - weight) + upper_stats['std_days'] * weight
+        
+        return interpolated_days, interpolated_std
+
+def simulate_realistic_price_path(start_price: float, end_price: float, days: int, 
+                                  historical_volatility: float = 0.04) -> np.ndarray:
+    """
+    Generate a realistic price path from start_price to end_price over 'days' period.
+    Uses geometric Brownian motion with drift to reach target.
+    
+    Returns: Array of daily prices
+    """
+    if days <= 1:
+        return np.array([start_price, end_price])
+    
+    # Calculate required drift to reach target
+    total_return = np.log(end_price / start_price)
+    drift = total_return / days
+    
+    # Generate random price path
+    np.random.seed(42)  # For reproducible results
+    dt = 1.0  # Daily steps
+    random_shocks = np.random.normal(0, historical_volatility * np.sqrt(dt), days - 1)
+    
+    # Build price path
+    log_returns = drift + random_shocks
+    log_prices = np.log(start_price) + np.cumsum(np.concatenate([[0], log_returns]))
+    prices = np.exp(log_prices)
+    
+    # Ensure we end at target price (adjust final value)
+    prices[-1] = end_price
+    
+    return prices
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Section 5 · Helper functions (defined before usage)
 # ──────────────────────────────────────────────────────────────────────────────
 def btc_needed_for_cure(price: float, loan: float) -> float:
     """
@@ -763,18 +944,23 @@ while state["free_btc"] < state["btc_goal"]:
     state["collat_btc"] += needed_btc
     state["free_btc"] -= needed_btc  # moved to collateral locker
 
-    # Step 3: price appreciation +$30 K
+    # Step 3: Predict realistic cycle duration and price path
+    expected_days, std_days = predict_cycle_duration(entry_price, movement_stats, params["exit_jump"])
+    
+    # Add some randomness to cycle duration (but keep deterministic for now)
+    actual_days = max(7, int(expected_days))  # Minimum 1 week
+    
+    # Generate realistic price path (for future margin call modeling)
     exit_price = entry_price + params["exit_jump"]
+    price_path = simulate_realistic_price_path(entry_price, exit_price, actual_days)
     state["price"] = exit_price
 
     # BTC purchased with loan (assuming instant buy at entry price)
     btc_bought = loan / entry_price
 
-    # Interest calculation: 11.5% APR for the cycle duration
-    # For now, assume each cycle takes approximately 1 year
-    # (We'll refine this timing in the next phase)
-    cycle_duration_years = 1.0  # Simplified assumption for now
-    interest = loan * params["loan_rate"] * cycle_duration_years
+    # Realistic compound interest calculation based on actual cycle duration
+    daily_rate = params["loan_rate"] / 365
+    interest = loan * ((1 + daily_rate) ** actual_days - 1)
     payoff = loan + interest
 
     # Sell BTC equal to payoff
@@ -788,14 +974,19 @@ while state["free_btc"] < state["btc_goal"]:
     # Step 5: set next loan equal to cap for new price
     state["loan"] = cap_next_loan(exit_price, state["collat_btc"])
 
-    # Log cycle with interest details
+    # Log cycle with timing and interest details
     records.append({
         "cycle": state["cycle"],
         "entry_price": entry_price,
         "exit_price": exit_price,
+        "cycle_duration_days": actual_days,
+        "expected_duration_days": expected_days,
+        "annualized_return_pct": ((exit_price / entry_price) ** (365 / actual_days) - 1) * 100,
         "loan": loan,
+        "daily_interest_rate": daily_rate * 100,
         "interest_paid": interest,
         "total_payoff": payoff,
+        "interest_as_pct_of_loan": (interest / loan) * 100,
         "needed_cure_btc": needed_btc,
         "btc_free": state["free_btc"],
         "btc_bought": btc_bought,
@@ -833,13 +1024,18 @@ total_interest = df['interest_paid'].sum()
 total_loans = df['loan'].sum()
 final_btc = df['btc_free'].iloc[-1]
 total_cycles = len(df)
+total_days = df['cycle_duration_days'].sum()
+avg_cycle_days = df['cycle_duration_days'].mean()
 
 print(f"\n📊 SIMULATION SUMMARY:")
 print(f"   💰 Final BTC Holdings: {final_btc:.4f} BTC")
 print(f"   🔄 Total Cycles: {total_cycles}")
+print(f"   ⏱️  Total Time: {total_days:.0f} days ({total_days/365:.1f} years)")
+print(f"   📅 Average Cycle Duration: {avg_cycle_days:.0f} days ({avg_cycle_days/30:.1f} months)")
 print(f"   💸 Total Interest Paid: ${total_interest:,.0f}")
 print(f"   📈 Average Loan Size: ${total_loans/total_cycles:,.0f}")
 print(f"   📊 Interest as % of Total Loans: {100*total_interest/total_loans:.1f}%")
+print(f"   🎯 Average Annualized Return: {df['annualized_return_pct'].mean():.1f}%")
 
 print("\nSimulation complete.  Files saved:\n"
       "  • cycles_log.csv\n"
