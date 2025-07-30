@@ -16,6 +16,7 @@ import datetime as dt
 import math
 import os
 import sys
+import time
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -793,8 +794,12 @@ class LoanSimulator:
         )
 
         # Choose scenario based on probabilities (use weighted random selection)
-        # Use cycle number and price for better randomness
-        seed_val = int((entry_price * cycle_number * 1000) % 100000)
+        # Use multiple factors for better randomness
+        import time
+        time_factor = int(time.time() * 1000) % 10000
+        price_factor = int(entry_price) % 1000
+        cycle_factor = cycle_number * 123  # Prime multiplier
+        seed_val = (time_factor + price_factor + cycle_factor) % 2147483647
         np.random.seed(seed_val)
         rand_val = np.random.random()
         cumulative_prob = 0
@@ -809,7 +814,8 @@ class LoanSimulator:
         if selected_scenario is None:
             selected_scenario = realistic_outcomes[-1]  # Fallback to last scenario
 
-        print(f"🎲 Selected scenario: {selected_scenario['scenario']} - {selected_scenario['description']}")
+        print(f"🎲 Cycle {cycle_number}: Selected scenario: {selected_scenario['scenario']} - {selected_scenario['description']}")
+        print(f"   Random value: {rand_val:.3f}, Probability: {selected_scenario['probability']:.1%}")
         print(f"   Outcome: {selected_scenario['outcome']}, Price: ${selected_scenario['final_price']:,.0f}")
 
         # Use scenario results
@@ -1052,10 +1058,19 @@ def main():
         worst_drop = drawdown_model(current_price)
         worst_price = current_price * (1 - worst_drop)
         
-        # Use contract baseline LTV but with safety margin for drawdowns
-        max_loan = collateral_btc * worst_price * 0.70  # 70% of collateral at worst price
-        loan_amount = min(max_loan, free_btc * current_price * 0.8)  # Less conservative sizing
-        loan_amount = max(loan_amount, simulator.min_loan)
+        # Use more aggressive but still safe loan sizing
+        max_loan = collateral_btc * worst_price * 0.80  # 80% of collateral at worst price (up from 70%)
+        
+        # Allow larger loans if we have sufficient free BTC as backup
+        backup_value = free_btc * current_price
+        if backup_value > 20000:  # If we have substantial backup
+            max_loan = min(max_loan * 1.5, 75000)  # Increase loan size, cap at $75k
+        
+        loan_amount = max(max_loan, simulator.min_loan)
+        
+        # Safety check: don't loan more than we can reasonably handle
+        max_reasonable_loan = (collateral_btc + free_btc * 0.5) * current_price * 0.6
+        loan_amount = min(loan_amount, max_reasonable_loan)
 
         # Simulate this cycle with probabilistic drawdowns
         cycle_result = simulator.simulate_cycle(
@@ -1082,12 +1097,35 @@ def main():
         if free_btc < 0:
             print(f"🚨 CRITICAL ERROR: Negative BTC holdings detected ({free_btc:.4f} BTC)")
             print(f"   This indicates the strategy has failed - terminating simulation")
+            print(f"   Final state: Free BTC: {free_btc:.4f}, Collateral: {collateral_btc:.4f}")
+            # Record failure state
+            cycle_result["cycle"] = cycle
+            cycle_result["free_btc_before"] = free_btc - btc_change
+            cycle_result["collateral_btc"] = collateral_btc
+            cycle_result["free_btc_after"] = free_btc
+            cycle_result["simulation_failure"] = "NEGATIVE_BTC_HOLDINGS"
+            results.append(cycle_result)
             break
             
         # Check for insufficient capital to continue
         if free_btc < 0.01:  # Less than 0.01 BTC remaining
             print(f"⚠️  Insufficient BTC to continue strategy ({free_btc:.4f} BTC remaining)")
             print(f"   Strategy has effectively failed - terminating simulation")
+            # Record near-failure state
+            cycle_result["cycle"] = cycle
+            cycle_result["free_btc_before"] = free_btc - btc_change
+            cycle_result["collateral_btc"] = collateral_btc
+            cycle_result["free_btc_after"] = free_btc
+            cycle_result["simulation_failure"] = "INSUFFICIENT_CAPITAL"
+            results.append(cycle_result)
+            break
+            
+        # Additional safety check: ensure collateral doesn't go negative
+        if collateral_btc < 0:
+            print(f"🚨 CRITICAL ERROR: Negative collateral detected ({collateral_btc:.4f} BTC)")
+            print(f"   This should never happen - terminating simulation")
+            cycle_result["simulation_failure"] = "NEGATIVE_COLLATERAL"
+            results.append(cycle_result)
             break
 
         # Add tracking info
