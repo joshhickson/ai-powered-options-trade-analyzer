@@ -23,6 +23,9 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.gridspec import GridSpec
 import seaborn as sns
+import logging
+import traceback
+from pathlib import Path
 
 # Try to import yfinance; fall back to CSV if offline
 try:
@@ -36,16 +39,68 @@ except ImportError:
 plt.style.use('seaborn-v0_8')
 sns.set_palette("husl")
 
-def generate_synthetic_btc_data():
+def setup_error_logging():
+    """Set up comprehensive error logging system."""
+    # Create logs directory if it doesn't exist
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    
+    # Create timestamp for log file
+    timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = log_dir / f"leverage_sim_errors_{timestamp}.log"
+    
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"Error logging initialized - Log file: {log_file}")
+    return logger
+
+def log_error(logger, operation: str, error: Exception, additional_info: dict = None):
+    """Log detailed error information."""
+    error_info = {
+        'operation': operation,
+        'error_type': type(error).__name__,
+        'error_message': str(error),
+        'traceback': traceback.format_exc()
+    }
+    
+    if additional_info:
+        error_info.update(additional_info)
+    
+    logger.error(f"ERROR in {operation}: {error_info}")
+    
+    # Also save error to dedicated error log
+    error_log_file = "logs/critical_errors.log"
+    with open(error_log_file, "a") as f:
+        f.write(f"\n{'='*50}\n")
+        f.write(f"TIMESTAMP: {dt.datetime.now()}\n")
+        f.write(f"OPERATION: {operation}\n")
+        f.write(f"ERROR: {error_info}\n")
+        if additional_info:
+            f.write(f"ADDITIONAL INFO: {additional_info}\n")
+        f.write(f"{'='*50}\n")
+
+def generate_synthetic_btc_data(logger=None):
     """Generate synthetic BTC price data for simulation when real data fails."""
-    print("🔄 Generating synthetic BTC price data for simulation...")
+    try:
+        if logger:
+            logger.info("Starting synthetic BTC data generation")
+        print("🔄 Generating synthetic BTC price data for simulation...")
 
-    # Create 5 years of daily data
-    dates = pd.date_range(start='2019-01-01', end='2024-01-01', freq='D')
+        # Create 5 years of daily data
+        dates = pd.date_range(start='2019-01-01', end='2024-01-01', freq='D')
 
-    # Generate realistic BTC price progression with volatility
-    np.random.seed(42)  # For reproducible results
-    n_days = len(dates)
+        # Generate realistic BTC price progression with volatility
+        np.random.seed(42)  # For reproducible results
+        n_days = len(dates)
 
     # Start at $4000, trend upward to ~$100k with realistic volatility
     trend = np.linspace(4000, 100000, n_days)
@@ -68,29 +123,59 @@ def generate_synthetic_btc_data():
                 recovery_factor = (i - crash_idx) / recovery_days
                 prices[i] *= (crash_magnitude + (1 - crash_magnitude) * recovery_factor)
 
-    return pd.Series(prices, index=dates, name='Close')
+    if logger:
+            logger.info(f"Successfully generated {len(prices)} synthetic price points")
+        return pd.Series(prices, index=dates, name='Close')
+        
+    except Exception as e:
+        if logger:
+            log_error(logger, "generate_synthetic_btc_data", e, {
+                'dates_range': f"{dates[0]} to {dates[-1]}" if 'dates' in locals() else "Unknown",
+                'n_days': n_days if 'n_days' in locals() else "Unknown"
+            })
+        print(f"❌ Error generating synthetic data: {e}")
+        # Return minimal fallback data
+        fallback_dates = pd.date_range(start='2023-01-01', end='2024-01-01', freq='D')
+        fallback_prices = np.linspace(20000, 100000, len(fallback_dates))
+        return pd.Series(fallback_prices, index=fallback_dates, name='Close')
 
-def load_btc_history() -> pd.Series:
+def load_btc_history(logger=None) -> pd.Series:
     """Load Bitcoin price history with fallbacks."""
+    if logger:
+        logger.info("Starting BTC price history loading")
 
     # Method 1: yfinance (if available)
     if ONLINE:
         try:
+            if logger:
+                logger.info("Attempting yfinance data download")
             print("📡 Trying yfinance...")
             btc = yf.download("BTC-USD", start="2015-01-01", progress=False)
             if not btc.empty and 'Adj Close' in btc.columns:
                 prices = btc["Adj Close"].dropna()
                 if len(prices) >= 100:
+                    if logger:
+                        logger.info(f"yfinance successful: {len(prices)} days loaded")
                     print(f"✅ yfinance successful: {len(prices)} days")
                     return prices
         except Exception as e:
+            if logger:
+                log_error(logger, "yfinance_download", e, {
+                    'online_status': ONLINE,
+                    'symbol': 'BTC-USD',
+                    'start_date': '2015-01-01'
+                })
             print(f"⚠️  yfinance failed: {e}")
 
     # Method 2: Local CSV fallback
     try:
+        if logger:
+            logger.info("Attempting CSV data loading")
         csv_files = ["btc_history_backup.csv", "btc_history.csv"]
         for csv_file in csv_files:
             if os.path.exists(csv_file):
+                if logger:
+                    logger.info(f"Found CSV file: {csv_file}")
                 print(f"📂 Loading BTC data from {csv_file}...")
                 df = pd.read_csv(csv_file, index_col=0, parse_dates=True)
 
@@ -104,24 +189,36 @@ def load_btc_history() -> pd.Series:
                 if price_col:
                     btc_series = df[price_col].astype(float).dropna()
                     btc_series.index = pd.to_datetime(btc_series.index)
+                    if logger:
+                        logger.info(f"Successfully loaded {len(btc_series)} days from {csv_file}")
                     print(f"✅ Successfully loaded {len(btc_series)} days from CSV")
                     return btc_series
 
     except Exception as e:
+        if logger:
+            log_error(logger, "csv_loading", e, {
+                'csv_files_checked': csv_files,
+                'files_exist': [os.path.exists(f) for f in csv_files]
+            })
         print(f"⚠️  CSV loading failed: {e}")
 
     # Method 3: Synthetic data (last resort)
+    if logger:
+        logger.warning("All real data sources failed, falling back to synthetic data")
     print("📊 All real data sources failed, using synthetic data...")
-    return generate_synthetic_btc_data()
+    return generate_synthetic_btc_data(logger)
 
-def worst_drop_until_recovery(price_series: pd.Series, jump: float = 30000.0) -> pd.DataFrame:
+def worst_drop_until_recovery(price_series: pd.Series, jump: float = 30000.0, logger=None) -> pd.DataFrame:
     """
     For each start date, find worst drawdown before price recovers by jump amount.
     """
-    res = []
-    dates = price_series.index
-    p = price_series.values
-    n = len(p)
+    try:
+        if logger:
+            logger.info(f"Starting drawdown analysis for {len(price_series)} price points")
+        res = []
+        dates = price_series.index
+        p = price_series.values
+        n = len(p)
 
     for i in range(n):
         target = p[i] + jump
@@ -139,7 +236,21 @@ def worst_drop_until_recovery(price_series: pd.Series, jump: float = 30000.0) ->
         res.append((dates[i], p[i], draw))
 
     df = pd.DataFrame(res, columns=["date", "price", "draw"])
-    return df
+        if logger:
+            logger.info(f"Completed drawdown analysis: {len(df)} recovery cycles found")
+        return df
+        
+    except Exception as e:
+        if logger:
+            log_error(logger, "worst_drop_until_recovery", e, {
+                'price_series_length': len(price_series) if price_series is not None else "None",
+                'jump_amount': jump,
+                'series_start': str(price_series.index[0]) if len(price_series) > 0 else "Empty",
+                'series_end': str(price_series.index[-1]) if len(price_series) > 0 else "Empty"
+            })
+        print(f"❌ Error in drawdown analysis: {e}")
+        # Return empty DataFrame with correct structure
+        return pd.DataFrame(columns=["date", "price", "draw"])
 
 def fit_drawdown_model(draw_df: pd.DataFrame):
     """Fit a drawdown model from historical data."""
@@ -614,19 +725,26 @@ Report generated: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 def main():
     """Run the improved Bitcoin lending simulation with enhanced visualizations."""
-    print("🚀 Starting Enhanced Bitcoin Collateral Lending Simulation")
-    print("=" * 60)
+    # Set up error logging first
+    logger = setup_error_logging()
+    
+    try:
+        logger.info("Starting Enhanced Bitcoin Collateral Lending Simulation")
+        print("🚀 Starting Enhanced Bitcoin Collateral Lending Simulation")
+        print("=" * 60)
 
-    # Load price data
-    prices = load_btc_history()
-    print(f"📊 Loaded {len(prices)} days of price data")
+        # Load price data
+        prices = load_btc_history(logger)
+        print(f"📊 Loaded {len(prices)} days of price data")
+        logger.info(f"Loaded {len(prices)} days of price data")
 
     # Analyze historical drawdowns
-    draw_df = worst_drop_until_recovery(prices, 30000.0)
-    print(f"📈 Analyzed {len(draw_df)} historical recovery cycles")
+        draw_df = worst_drop_until_recovery(prices, 30000.0, logger)
+        print(f"📈 Analyzed {len(draw_df)} historical recovery cycles")
+        logger.info(f"Analyzed {len(draw_df)} historical recovery cycles")
 
-    # Fit drawdown model
-    drawdown_model = fit_drawdown_model(draw_df)
+        # Fit drawdown model
+        drawdown_model = fit_drawdown_model(draw_df)
 
     # Initialize simulation
     simulator = LoanSimulator()
@@ -658,29 +776,35 @@ def main():
     results = []
 
     while free_btc < btc_goal and cycle < 50:  # Safety limit
-        cycle += 1
+            cycle += 1
+            
+            try:
+                logger.info(f"Starting cycle {cycle}")
+                
+                # Determine loan size for this cycle
+                worst_drop = drawdown_model(current_price)
+                worst_price = current_price * (1 - worst_drop)
+                max_loan = collateral_btc * worst_price * 0.75
+                loan_amount = min(max_loan, free_btc * current_price * 0.5)  # Conservative sizing
+                loan_amount = max(loan_amount, simulator.min_loan)
 
-        # Determine loan size for this cycle
-        worst_drop = drawdown_model(current_price)
-        worst_price = current_price * (1 - worst_drop)
-        max_loan = collateral_btc * worst_price * 0.75
-        loan_amount = min(max_loan, free_btc * current_price * 0.5)  # Conservative sizing
-        loan_amount = max(loan_amount, simulator.min_loan)
+                logger.info(f"Cycle {cycle} parameters: price=${current_price:,.0f}, loan=${loan_amount:,.0f}")
 
-        # Simulate this cycle
-        cycle_result = simulator.simulate_cycle(
-            current_price, collateral_btc, loan_amount, drawdown_model
-        )
+                # Simulate this cycle
+                cycle_result = simulator.simulate_cycle(
+                    current_price, collateral_btc, loan_amount, drawdown_model
+                )
 
         # Check if liquidation occurred
-        if cycle_result["liquidation_occurred"]:
-            print(f"💥 LIQUIDATION in cycle {cycle} - simulation terminated")
-            cycle_result["cycle"] = cycle
-            cycle_result["free_btc_before"] = free_btc
-            cycle_result["collateral_btc"] = collateral_btc
-            cycle_result["free_btc_after"] = 0  # Lost everything
-            results.append(cycle_result)
-            break
+                if cycle_result["liquidation_occurred"]:
+                    logger.error(f"LIQUIDATION occurred in cycle {cycle}")
+                    print(f"💥 LIQUIDATION in cycle {cycle} - simulation terminated")
+                    cycle_result["cycle"] = cycle
+                    cycle_result["free_btc_before"] = free_btc
+                    cycle_result["collateral_btc"] = collateral_btc
+                    cycle_result["free_btc_after"] = 0  # Lost everything
+                    results.append(cycle_result)
+                    break
 
         # Apply cycle results
         btc_change = cycle_result["net_btc_gain"] - cycle_result["cure_btc_needed"]
@@ -697,51 +821,87 @@ def main():
 
         results.append(cycle_result)
 
-        print(f"📊 Cycle {cycle}: ${current_price:,.0f} → ${cycle_result['exit_price']:,.0f}, "
-              f"BTC: {free_btc:.4f}, Strategy: {cycle_result['payment_strategy']}")
+        logger.info(f"Cycle {cycle} completed successfully")
+                print(f"📊 Cycle {cycle}: ${current_price:,.0f} → ${cycle_result['exit_price']:,.0f}, "
+                      f"BTC: {free_btc:.4f}, Strategy: {cycle_result['payment_strategy']}")
 
-        # Stop if we've reached our goal
-        if free_btc >= btc_goal:
-            print(f"🎯 Goal reached! Free BTC: {free_btc:.4f}")
-            break
+                # Stop if we've reached our goal
+                if free_btc >= btc_goal:
+                    logger.info(f"Goal reached! Free BTC: {free_btc:.4f}")
+                    print(f"🎯 Goal reached! Free BTC: {free_btc:.4f}")
+                    break
 
-        # Prepare for next cycle - reset collateral to safe level
-        if free_btc > 0.1:  # Ensure we have enough for collateral
-            collateral_btc = min(free_btc / 2, 0.5)  # Conservative collateral management
-            free_btc -= collateral_btc
+                # Prepare for next cycle - reset collateral to safe level
+                if free_btc > 0.1:  # Ensure we have enough for collateral
+                    collateral_btc = min(free_btc / 2, 0.5)  # Conservative collateral management
+                    free_btc -= collateral_btc
+                    
+            except Exception as e:
+                log_error(logger, f"cycle_{cycle}_processing", e, {
+                    'cycle': cycle,
+                    'current_price': current_price,
+                    'free_btc': free_btc,
+                    'collateral_btc': collateral_btc,
+                    'loan_amount': loan_amount if 'loan_amount' in locals() else "Unknown"
+                })
+                print(f"❌ Error in cycle {cycle}: {e}")
+                break  # Stop simulation on cycle error
 
     # Generate enhanced outputs
-    if results:
-        df = pd.DataFrame(results)
+        if results:
+            try:
+                logger.info("Starting output generation")
+                df = pd.DataFrame(results)
+                
+                # Save detailed CSV
+                df.to_csv("detailed_simulation_results.csv", index=False)
+                logger.info("Saved detailed CSV results")
+                
+                # Create enhanced visualizations
+                print("🎨 Generating enhanced visualizations...")
+                fig = create_enhanced_visualizations(df, start_btc, btc_goal)
+                fig.savefig("bitcoin_lending_dashboard.png", dpi=300, bbox_inches='tight', 
+                           facecolor='white', edgecolor='none')
+                plt.close(fig)
+                logger.info("Generated visualization dashboard")
+                
+                # Generate executive summary
+                print("📝 Generating executive summary report...")
+                summary_report = generate_executive_summary_report(df, start_btc, btc_goal)
+                
+                # Save report to file
+                with open("executive_summary_report.txt", "w") as f:
+                    f.write(summary_report)
+                logger.info("Generated executive summary report")
+                
+                # Print summary to console
+                print(summary_report)
+                
+                print("\n📁 Enhanced outputs generated:")
+                print("   • detailed_simulation_results.csv - Complete data export")
+                print("   • bitcoin_lending_dashboard.png - Comprehensive visual dashboard")
+                print("   • executive_summary_report.txt - Executive summary report")
+                
+            except Exception as e:
+                log_error(logger, "output_generation", e, {
+                    'results_count': len(results),
+                    'dataframe_shape': df.shape if 'df' in locals() else "Not created"
+                })
+                print(f"❌ Error generating outputs: {e}")
+            
+        else:
+            logger.warning("No cycles completed - strategy failed immediately")
+            print("❌ No cycles completed - strategy failed immediately")
+            
+    except Exception as e:
+        log_error(logger, "main_simulation", e, {
+            'cycle': cycle if 'cycle' in locals() else "Not started",
+            'prices_loaded': len(prices) if 'prices' in locals() else "Failed to load"
+        })
+        print(f"❌ Critical error in main simulation: {e}")
         
-        # Save detailed CSV
-        df.to_csv("detailed_simulation_results.csv", index=False)
-        
-        # Create enhanced visualizations
-        print("🎨 Generating enhanced visualizations...")
-        fig = create_enhanced_visualizations(df, start_btc, btc_goal)
-        fig.savefig("bitcoin_lending_dashboard.png", dpi=300, bbox_inches='tight', 
-                   facecolor='white', edgecolor='none')
-        plt.close(fig)
-        
-        # Generate executive summary
-        print("📝 Generating executive summary report...")
-        summary_report = generate_executive_summary_report(df, start_btc, btc_goal)
-        
-        # Save report to file
-        with open("executive_summary_report.txt", "w") as f:
-            f.write(summary_report)
-        
-        # Print summary to console
-        print(summary_report)
-        
-        print("\n📁 Enhanced outputs generated:")
-        print("   • detailed_simulation_results.csv - Complete data export")
-        print("   • bitcoin_lending_dashboard.png - Comprehensive visual dashboard")
-        print("   • executive_summary_report.txt - Executive summary report")
-        
-    else:
-        print("❌ No cycles completed - strategy failed immediately")
+    finally:
+        logger.info("Simulation completed - check logs for detailed error information")
 
 if __name__ == "__main__":
     main()
