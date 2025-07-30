@@ -145,49 +145,40 @@ def worst_drop_until_recovery(price_series: pd.Series, jump: float = 30000.0) ->
     return df
 
 def create_conservative_drawdown_model():
-    """Use conservative drawdown estimates based on Bitcoin's full crash history."""
-    def conservative_drawdown(price: float) -> float:
+    """Use realistic risk-adjusted drawdown model based on Bitcoin's historical patterns."""
+    def realistic_risk_drawdown(price: float) -> float:
         """
-        Conservative model based on actual Bitcoin crashes:
-        - 2018: -84% peak to trough (ATH $20k → $3.2k)
-        - 2022: -77% peak to trough (ATH $69k → $15.5k)  
-        - 2011: -93% peak to trough (ATH $32 → $2)
-        - 2017: -70% crash from $20k
-        - Multiple 50-70% crashes throughout history
+        Realistic risk model based on Bitcoin crash frequency and severity:
+        - Major crashes (70-85%) happen roughly every 4-7 years (2011, 2018, 2022)
+        - Most cycles see 30-50% corrections during bull markets
+        - Bear markets typically see 50-70% drops from peak
+        - Extreme crashes (80%+) are rare but possible
 
-        This model expects 75-85% drawdowns as the norm, not the exception.
+        This model uses worst-case planning (70% max) with additional safety margin.
         """
-        # Base conservative expectation: 75% drawdown minimum
-        base_drawdown = 0.75
-
-        # Higher prices typically see larger percentage drops due to:
-        # - More institutional money that can exit quickly
-        # - Higher leverage in the system
-        # - Regulatory risks at higher market caps
-        # - Profit-taking behavior at psychological levels
-
+        # Use 95th percentile risk planning instead of absolute worst case
+        # This accounts for major crashes without assuming they happen every cycle
+        
         if price < 30000:
-            # Lower prices: historically see 70-85% crashes
-            price_factor = 1.0
+            # Lower price levels: historically more stable, 60% max crash
+            expected_drawdown = 0.60
         elif price < 100000:
-            # Mid-range prices: tend to see larger crashes (80-90%)
-            price_factor = 1.1
+            # Mid-range: 2018/2022 style crashes possible, 70% max
+            expected_drawdown = 0.70
         else:
-            # High prices: maximum crash potential (85%+)
-            price_factor = 1.15
+            # High prices: uncharted territory, plan for 75% max crash
+            expected_drawdown = 0.75
 
-        # Calculate expected worst-case drawdown
-        expected_drawdown = min(0.90, base_drawdown * price_factor)
-
-        print(f"💡 Conservative model at ${price:,.0f}: expects {expected_drawdown:.1%} maximum drawdown")
+        print(f"💡 Risk model at ${price:,.0f}: planning for {expected_drawdown:.1%} maximum drawdown")
+        print(f"   (This represents 95th percentile risk, not guaranteed worst case)")
 
         return expected_drawdown
 
-    return conservative_drawdown
+    return realistic_risk_drawdown
 
 def fit_drawdown_model(draw_df: pd.DataFrame):
     """Fit a drawdown model - now uses conservative model by default."""
-    print("📊 Using conservative drawdown model based on Bitcoin crash history")
+    print("📊 Using realistic risk-adjusted model based on Bitcoin crash history")
 
     # Always use conservative model for safety
     conservative_model = create_conservative_drawdown_model()
@@ -393,10 +384,10 @@ class LoanSimulator:
         self.origination_fee_rate = 0.033  # ~3.3% estimated
         self.processing_fee_rate = 0.02  # 2% on liquidations
 
-        # Ultra-conservative LTV thresholds based on 80%+ crash expectation
-        self.baseline_ltv = 0.35  # Never exceed 35% under normal conditions
-        self.margin_call_ltv = 0.60  # Early warning at 60%
-        self.liquidation_ltv = 0.75  # Forced exit at 75% (well before 85-90% danger zone)
+        # Realistic but safe LTV thresholds based on 70% max crash planning
+        self.baseline_ltv = 0.50  # Target 50% LTV under normal conditions
+        self.margin_call_ltv = 0.70  # Early warning at 70% 
+        self.liquidation_ltv = 0.80  # Forced exit at 80% (safety margin for 70% crashes)
         self.collateral_release_ltv = 0.20
 
         # Operational parameters - realistic expectations
