@@ -1,4 +1,3 @@
-
 # Bitcoin Simulation Logic Fix Plan
 
 ## Identified Logic Issues
@@ -25,7 +24,11 @@ payoff = loan + loan * params["loan_rate"]  # 1-yr APR lump
   - Force liquidation: 90% LTV (immediate)
   - Collateral release possible: <35% LTV for 7+ days
 
-**Key Insight**: The simulation needs to account for monthly interest payments PLUS the risk of forced liquidation during market downturns, not just end-of-cycle interest.
+**Key Insight - Interest Deferral Option**: The contract allows interest to be deferred, which changes the risk profile:
+1. **If interest is paid monthly**: Requires selling BTC each month, reducing collateral
+2. **If interest is deferred**: Interest compounds and adds to principal balance
+3. **Deferred interest increases loan balance**: Higher LTV ratio over time
+4. **Choice creates strategic trade-off**: Cash flow vs. compound interest burden
 
 **Impact**: Current model massively underestimates both borrowing costs AND liquidation risk
 
@@ -92,7 +95,7 @@ def calculate_daily_interest_accrual(principal, apr, days):
 def check_ltv_triggers(loan_balance, collateral_value):
     """Monitor LTV levels for margin calls and liquidations"""
     ltv = loan_balance / collateral_value
-    
+
     if ltv >= 0.90:
         return "FORCE_LIQUIDATION"  # Immediate sale
     elif ltv >= 0.85:
@@ -139,7 +142,7 @@ def simulate_interest_payment_impact(btc_holdings, monthly_payment, btc_price):
     # Each month, must sell BTC to make interest payment
     btc_sold_for_interest = monthly_payment / btc_price
     remaining_btc = btc_holdings - btc_sold_for_interest
-    
+
     # This reduces collateral, increasing LTV ratio over time
     # Creates compounding liquidation risk
     return remaining_btc, btc_sold_for_interest
@@ -157,13 +160,13 @@ def daily_ltv_check(loan_balance, collateral_btc, btc_price, day):
     """Check LTV status every day of simulation"""
     collateral_value = collateral_btc * btc_price
     current_ltv = loan_balance / collateral_value
-    
+
     # Log all margin call events, not just end-of-cycle
     if current_ltv >= 0.90:
         return trigger_force_liquidation(collateral_btc, loan_balance)
     elif current_ltv >= 0.85:
         return trigger_margin_call(day)
-    
+
     return current_ltv
 
 def trigger_margin_call(day):
