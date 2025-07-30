@@ -291,32 +291,32 @@ def simulate_realistic_cycle_outcome(start_price: float, loan_size: float,
     """
     print(f"🎲 Simulating realistic outcomes for {months}-month cycle starting at ${start_price:,.0f}")
 
-    # Historical Bitcoin patterns (based on actual data)
+    # Use conservative model-based scenarios that reflect 70-85% crash potential
     scenarios = {
         "bull_run": {
-            "probability": 0.15,  # 15% chance - rare
-            "monthly_return": 0.25,  # 25% per month average
+            "probability": 0.20,  # 20% chance
+            "monthly_return": 0.15,  # 15% per month (more realistic)
             "description": "Strong bull market"
         },
         "moderate_growth": {
             "probability": 0.25,  # 25% chance
-            "monthly_return": 0.08,  # 8% per month
+            "monthly_return": 0.05,  # 5% per month (conservative)
             "description": "Steady upward trend"
         },
         "sideways": {
-            "probability": 0.30,  # 30% chance - most common
-            "monthly_return": 0.02,  # 2% per month
+            "probability": 0.25,  # 25% chance
+            "monthly_return": 0.00,  # 0% per month (true sideways)
             "description": "Choppy sideways movement"
         },
         "decline": {
             "probability": 0.20,  # 20% chance
-            "monthly_return": -0.05,  # -5% per month
+            "monthly_return": -0.08,  # -8% per month (realistic decline)
             "description": "Gradual decline"
         },
-        "bear_market": {
-            "probability": 0.10,  # 10% chance
-            "monthly_return": -0.15,  # -15% per month
-            "description": "Bear market crash"
+        "bear_crash": {
+            "probability": 0.10,  # 10% chance - matches conservative model expectations
+            "monthly_return": -0.25,  # -25% per month (70%+ annual crash)
+            "description": "Major bear market crash (70%+ drop)"
         }
     }
 
@@ -332,13 +332,16 @@ def simulate_realistic_cycle_outcome(start_price: float, loan_size: float,
         volatility_factor = np.random.normal(1.0, 0.20)  # ±20% volatility around trend
         final_price *= volatility_factor
 
-        # Calculate worst drawdown during the period
-        if scenario["monthly_return"] > 0:
-            # Bull scenarios still have drawdowns during the period
-            worst_drawdown = min(0.40, abs(scenario["monthly_return"]) * 2)
+        # Use conservative model for drawdown calculations
+        if scenario_name == "bear_crash":
+            # Major crash scenario: use conservative model prediction
+            worst_drawdown = 0.75  # 75% crash (conservative model range)
+        elif scenario["monthly_return"] < 0:
+            # Decline scenarios: significant but not extreme
+            worst_drawdown = min(0.50, abs(scenario["monthly_return"]) * 4)
         else:
-            # Bear scenarios have larger drawdowns
-            worst_drawdown = min(0.80, abs(scenario["monthly_return"]) * 3)
+            # Bull/sideways scenarios: still have drawdowns but smaller
+            worst_drawdown = min(0.30, abs(scenario["monthly_return"]) * 2 + 0.15)
 
         worst_price = start_price * (1 - worst_drawdown)
 
