@@ -71,7 +71,14 @@ def load_btc_history() -> pd.Series:
         import nasdaqdatalink
         print("📈 Tier 1: Trying Nasdaq Data Link (Brave New Coin)...")
         
-        # Try without API key first (limited requests)
+        # Set API key from secrets
+        nasdaq_api_key = os.getenv('NASDAQ_API_KEY')
+        if nasdaq_api_key:
+            nasdaqdatalink.ApiConfig.api_key = nasdaq_api_key
+            print("🔑 Using Nasdaq API key from secrets")
+        else:
+            print("⚠️  No Nasdaq API key found, using limited access")
+        
         try:
             df = nasdaqdatalink.get("BNC/BLX", start_date="2010-01-01")
             btc_series = df['Value'].astype(float)
@@ -79,7 +86,7 @@ def load_btc_history() -> pd.Series:
             print(f"✅ Nasdaq Data Link successful: {len(btc_series)} days")
             return btc_series
         except Exception as auth_e:
-            print(f"⚠️  Nasdaq API needs key for full access: {auth_e}")
+            print(f"⚠️  Nasdaq API error: {auth_e}")
             
     except ImportError:
         print("⚠️  nasdaq-data-link not installed")
