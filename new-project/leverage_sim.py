@@ -1058,17 +1058,14 @@ def main():
     # Initialize simulation
     simulator = LoanSimulator()
 
-    # Starting conditions - Fixed parameters as requested
-    start_btc = 0.50  # Keep some free BTC for flexibility
+    # Starting conditions - Progressive Strategy Parameters  
+    start_btc = 0.254  # Initial BTC from $30K at $118K/BTC
     start_price = 118000.0
-    btc_goal = 0.81
+    btc_goal = 1.0  # Target 1.0 BTC total
 
-    # Fixed loan parameters as requested
-    initial_collateral = 0.12  # Fixed 0.12 BTC collateral
-    initial_loan = 10000.0     # Fixed $10,000 loan at 11.5% APR
-    
-    # Update starting BTC to account for fixed collateral
-    start_btc = initial_collateral + 0.38  # 0.12 collateral + 0.38 free BTC
+    # Progressive loan parameters - Dynamic scaling based on holdings
+    loan_to_collateral_ratio = 1.4  # Conservative starting ratio (can be tuned)
+    exit_price_target = 30000.0     # Target $30K appreciation per cycle
 
     print(f"💰 Initial loan amount: ${initial_loan:,.0f}")
     print(f"🪙 Initial collateral: {initial_collateral:.4f} BTC")
@@ -1102,30 +1099,35 @@ def main():
         
         return
 
-    # Simulation state
-    free_btc = start_btc - initial_collateral
-    collateral_btc = initial_collateral
+    # Simulation state - Progressive Strategy
+    total_btc = start_btc  # Track total BTC holdings
     current_price = start_price
     cycle = 0
 
     results = []
 
-    while free_btc < btc_goal and cycle < 50:  # Safety limit
+    while total_btc < btc_goal and cycle < 50:  # Safety limit
         cycle += 1
 
-        # Fixed loan amount as requested - always $10,000 at 11.5% APR
-        loan_amount = 10000.0
+        # PROGRESSIVE LOAN SIZING: Use exactly half of total BTC as collateral
+        collateral_btc = total_btc / 2.0
+        backup_btc = total_btc / 2.0  # Other half as backup
         
-        # Ensure we have enough collateral for this fixed loan
-        if collateral_btc < 0.12:
-            # Add more collateral from free BTC if needed
-            needed_collateral = 0.12 - collateral_btc
-            if free_btc >= needed_collateral:
-                free_btc -= needed_collateral
-                collateral_btc = 0.12
-            else:
-                print(f"⚠️  Insufficient BTC for 0.12 collateral requirement")
-                break
+        # Calculate loan amount based on collateral and ratio
+        desired_loan = collateral_btc * current_price * loan_to_collateral_ratio
+        
+        # Respect platform minimum loan requirement
+        loan_amount = max(desired_loan, simulator.min_loan)
+        
+        # Safety check: ensure loan doesn't exceed safe LTV even in crashes
+        crash_price = current_price * 0.4  # 60% crash scenario
+        max_safe_loan = collateral_btc * crash_price * 0.75  # 75% LTV at crash price
+        
+        if loan_amount > max_safe_loan:
+            print(f"⚠️  Reducing loan from ${loan_amount:,.0f} to ${max_safe_loan:,.0f} for safety")
+            loan_amount = max_safe_loan
+        
+        print(f"📊 Cycle {cycle}: Total BTC: {total_btc:.4f}, Collateral: {collateral_btc:.4f}, Loan: ${loan_amount:,.0f}")
 
         # Simulate this cycle with probabilistic drawdowns
         cycle_result = simulator.simulate_cycle(
@@ -1142,74 +1144,52 @@ def main():
             results.append(cycle_result)
             break
 
-        # Apply cycle results
-        btc_change = cycle_result["net_btc_gain"] - cycle_result["cure_btc_needed"]
-        free_btc += btc_change
-        collateral_btc -= cycle_result["cure_btc_needed"]  # BTC moved to cure margin call
+        # Apply cycle results to total holdings
+        net_gain = cycle_result["net_btc_gain"] - cycle_result["cure_btc_needed"]
+        previous_total = total_btc
+        total_btc += net_gain
         current_price = cycle_result["exit_price"]
         
-        # CRITICAL: Check for negative BTC (impossible scenario)
-        if free_btc < 0:
-            print(f"🚨 CRITICAL ERROR: Negative BTC holdings detected ({free_btc:.4f} BTC)")
-            print(f"   This indicates the strategy has failed - terminating simulation")
-            print(f"   Final state: Free BTC: {free_btc:.4f}, Collateral: {collateral_btc:.4f}")
-            # Record failure state
+        # CRITICAL: Check for negative total BTC
+        if total_btc < 0:
+            print(f"🚨 CRITICAL ERROR: Negative total BTC holdings ({total_btc:.4f} BTC)")
+            print(f"   Strategy has failed - terminating simulation")
             cycle_result["cycle"] = cycle
-            cycle_result["free_btc_before"] = free_btc - btc_change
-            cycle_result["collateral_btc"] = collateral_btc
-            cycle_result["free_btc_after"] = free_btc
-            cycle_result["simulation_failure"] = "NEGATIVE_BTC_HOLDINGS"
+            cycle_result["total_btc_before"] = previous_total
+            cycle_result["total_btc_after"] = total_btc
+            cycle_result["simulation_failure"] = "NEGATIVE_TOTAL_BTC"
             results.append(cycle_result)
             break
             
-        # Check for insufficient capital to continue
-        if free_btc < 0.01:  # Less than 0.01 BTC remaining
-            print(f"⚠️  Insufficient BTC to continue strategy ({free_btc:.4f} BTC remaining)")
+        # Check for insufficient capital to continue meaningful cycles
+        if total_btc < 0.05:  # Less than 0.05 BTC total
+            print(f"⚠️  Insufficient BTC for meaningful cycles ({total_btc:.4f} BTC total)")
             print(f"   Strategy has effectively failed - terminating simulation")
-            # Record near-failure state
             cycle_result["cycle"] = cycle
-            cycle_result["free_btc_before"] = free_btc - btc_change
-            cycle_result["collateral_btc"] = collateral_btc
-            cycle_result["free_btc_after"] = free_btc
+            cycle_result["total_btc_before"] = previous_total
+            cycle_result["total_btc_after"] = total_btc
             cycle_result["simulation_failure"] = "INSUFFICIENT_CAPITAL"
             results.append(cycle_result)
             break
-            
-        # Additional safety check: ensure collateral doesn't go negative
-        if collateral_btc < 0:
-            print(f"🚨 CRITICAL ERROR: Negative collateral detected ({collateral_btc:.4f} BTC)")
-            print(f"   This should never happen - terminating simulation")
-            cycle_result["simulation_failure"] = "NEGATIVE_COLLATERAL"
-            results.append(cycle_result)
-            break
 
-        # Add tracking info
+        # Add tracking info for progressive strategy
         cycle_result["cycle"] = cycle
-        cycle_result["free_btc_before"] = free_btc - btc_change
-        cycle_result["collateral_btc"] = collateral_btc
-        cycle_result["free_btc_after"] = free_btc
-        cycle_result["total_btc"] = free_btc + collateral_btc
+        cycle_result["total_btc_before"] = previous_total
+        cycle_result["total_btc_after"] = total_btc
+        cycle_result["collateral_used"] = collateral_btc
+        cycle_result["backup_btc"] = backup_btc
+        cycle_result["loan_to_collateral_ratio"] = loan_amount / (collateral_btc * current_price) if collateral_btc > 0 else 0
 
         results.append(cycle_result)
 
-        print(f"📊 Cycle {cycle}: ${current_price:,.0f} → ${cycle_result['exit_price']:,.0f}, "
-              f"BTC: {free_btc:.4f}, Strategy: {cycle_result['payment_strategy']}")
+        print(f"📊 Cycle {cycle}: ${current_price:,.0f} → ${cycle_result['exit_price']:,.0f}")
+        print(f"   Total BTC: {previous_total:.4f} → {total_btc:.4f} (+{net_gain:.4f})")
+        print(f"   Next Collateral: {total_btc/2:.4f} BTC, Backup: {total_btc/2:.4f} BTC")
 
         # Stop if we've reached our goal
-        if free_btc >= btc_goal:
-            print(f"🎯 Goal reached! Free BTC: {free_btc:.4f}")
+        if total_btc >= btc_goal:
+            print(f"🎯 GOAL ACHIEVED! Total BTC: {total_btc:.4f}")
             break
-
-        # Maintain fixed 0.12 BTC collateral for next cycle
-        if collateral_btc < 0.12 and free_btc > 0:
-            needed_collateral = 0.12 - collateral_btc
-            if free_btc >= needed_collateral:
-                free_btc -= needed_collateral
-                collateral_btc = 0.12
-            else:
-                # Use all remaining free BTC as collateral
-                collateral_btc += free_btc
-                free_btc = 0
 
     # Save and analyze results
     if results:
@@ -1270,7 +1250,8 @@ def main():
 
         total_interest = df.total_interest.sum()
         total_loans = df.loan_amount.sum()
-        final_btc = df.free_btc_after.iloc[-1] if len(df) > 0 else 0
+        final_btc = df.total_btc_after.iloc[-1] if len(df) > 0 and 'total_btc_after' in df.columns else 0
+        starting_btc = start_btc
         total_cycles = len(df)
         total_days = df.cycle_duration_days.sum()
 
@@ -1279,10 +1260,17 @@ def main():
         margin_calls = len(df[df.margin_call_occurred])
         liquidations = len(df[df.liquidation_occurred])
 
+        # Progressive strategy specific metrics
+        btc_growth = final_btc - starting_btc
+        growth_multiple = final_btc / starting_btc if starting_btc > 0 else 0
+        avg_loan_size = total_loans / total_cycles if total_cycles > 0 else 0
+        
         print(f"💰 Final BTC Holdings: {final_btc:.4f} BTC")
+        print(f"📈 BTC Growth: +{btc_growth:.4f} BTC ({growth_multiple:.2f}x)")
         print(f"🔄 Total Cycles: {total_cycles}")
         print(f"⏱️  Total Time: {total_days:.0f} days ({total_days/365:.1f} years)")
         print(f"💸 Total Interest Paid: ${total_interest:,.0f}")
+        print(f"📊 Average Loan Size: ${avg_loan_size:,.0f}")
         print(f"📊 Average Interest Rate: {100*total_interest/total_loans:.1f}%")
         print(f"🔵 Deferred Interest Cycles: {deferred_cycles}")
         print(f"🔴 Monthly Payment Cycles: {monthly_cycles}")
@@ -1291,8 +1279,10 @@ def main():
 
         if final_btc >= btc_goal:
             print(f"🎯 SUCCESS: Goal of {btc_goal} BTC achieved!")
+            print(f"   Growth Rate: {(growth_multiple-1)*100:.1f}% total, {((growth_multiple**(365/total_days))-1)*100:.1f}% annualized")
         else:
             print(f"❌ Goal not reached. Strategy may not be viable.")
+            print(f"   Reached {final_btc/btc_goal*100:.1f}% of target")
 
         # Create summary report
         summary_file = export_dir / "simulation_summary.txt"
