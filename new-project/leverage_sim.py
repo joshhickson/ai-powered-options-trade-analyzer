@@ -65,7 +65,39 @@ def generate_synthetic_btc_data():
 def load_btc_history() -> pd.Series:
     """Load Bitcoin price history with fallbacks."""
 
-    # Method 1: yfinance (if available)
+    # Method 1: Binance API (720 days, no auth required)
+    try:
+        import requests
+        print("📡 Trying Binance API...")
+        
+        # Binance klines endpoint for BTCUSDT
+        url = "https://api.binance.com/api/v3/klines"
+        params = {
+            'symbol': 'BTCUSDT',
+            'interval': '1d',
+            'limit': 720  # Maximum 720 days
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        if data and len(data) > 100:
+            # Convert Binance data to pandas Series
+            # Binance format: [timestamp, open, high, low, close, volume, ...]
+            timestamps = [int(candle[0]) / 1000 for candle in data]  # Convert ms to seconds
+            closes = [float(candle[4]) for candle in data]  # Close prices
+            
+            dates = pd.to_datetime(timestamps, unit='s')
+            prices = pd.Series(closes, index=dates, name='Close')
+            
+            print(f"✅ Binance successful: {len(prices)} days")
+            return prices
+            
+    except Exception as e:
+        print(f"⚠️  Binance API failed: {e}")
+
+    # Method 2: yfinance (if available)
     if ONLINE:
         try:
             print("📡 Trying yfinance...")
@@ -78,7 +110,7 @@ def load_btc_history() -> pd.Series:
         except Exception as e:
             print(f"⚠️  yfinance failed: {e}")
 
-    # Method 2: Local CSV fallback
+    # Method 3: Local CSV fallback
     try:
         csv_files = ["btc_history_backup.csv", "btc_history.csv"]
         for csv_file in csv_files:
@@ -102,7 +134,7 @@ def load_btc_history() -> pd.Series:
     except Exception as e:
         print(f"⚠️  CSV loading failed: {e}")
 
-    # Method 3: Synthetic data (last resort)
+    # Method 4: Synthetic data (last resort)
     print("📊 All real data sources failed, using synthetic data...")
     return generate_synthetic_btc_data()
 
