@@ -596,6 +596,63 @@ class LoanSimulator:
             "recommendation": f"Proceed with caution. Max safe loan: ${max_safe_loan:,.0f}"
         }
 
+    def validate_strategy_viability(self, start_btc: float, start_price: float, 
+                                  goal_btc: float) -> dict:
+        """Check if strategy is mathematically viable given constraints."""
+        starting_value = start_btc * start_price
+        goal_value = goal_btc * start_price  # Conservative: same price
+        required_gain = goal_value - starting_value
+
+        # Calculate theoretical maximum with safe leverage
+        max_collateral = start_btc - self.min_collateral_buffer
+        if max_collateral <= 0:
+            return {
+                "viable": False, 
+                "reason": "Insufficient starting capital for any collateral",
+                "recommendation": "Increase starting BTC to at least 0.15 BTC"
+            }
+
+        # Conservative drawdown assumption - allow for 60% crash with contract terms
+        conservative_crash_price = start_price * 0.40  # 60% crash (historical worst-case)
+        max_safe_loan = max_collateral * conservative_crash_price * 0.75  # Use baseline LTV
+
+        if max_safe_loan < self.min_loan:
+            return {
+                "viable": False,
+                "reason": f"Max safe loan ${max_safe_loan:,.0f} below minimum ${self.min_loan:,.0f}",
+                "recommendation": f"Need at least {self.min_loan / (conservative_crash_price * self.max_safe_ltv):.3f} BTC for viable strategy"
+            }
+
+        # Estimate cycles needed (very rough)
+        btc_per_cycle = max_safe_loan / start_price * 0.5  # Conservative 50% efficiency
+        cycles_needed = required_gain / (btc_per_cycle * start_price)
+
+        if cycles_needed > 20:
+            return {
+                "viable": False,
+                "reason": f"Would require {cycles_needed:.0f} cycles - too risky/long",
+                "recommendation": "Strategy not viable with current parameters. Consider: 1) Increase starting capital, 2) Lower goal, 3) Use DCA instead"
+            }
+
+        # Check interest cost impact over time
+        annual_interest_cost = max_safe_loan * self.base_apr
+        cycles_per_year = 365 / 180  # Assume 6 months per cycle
+        annual_cycles = min(cycles_needed, cycles_per_year)
+        interest_burden = annual_interest_cost / starting_value
+
+        if interest_burden > 0.5:  # 50% of portfolio value per year
+            return {
+                "viable": False,
+                "reason": f"Interest costs {interest_burden:.1%} of portfolio annually - unsustainable",
+                "recommendation": "Interest burden too high. Reduce leverage or increase starting capital"
+            }
+
+        return {
+            "viable": True,
+            "reason": f"Estimated {cycles_needed:.1f} cycles, {interest_burden:.1%} annual interest burden",
+            "recommendation": f"Proceed with caution. Max safe loan: ${max_safe_loan:,.0f}"
+        }
+
     def model_bear_market_impact(self, start_price: float, collateral_btc: float, 
                                loan_balance: float) -> dict:
         """Model what happens during extended bear market using historical patterns."""
