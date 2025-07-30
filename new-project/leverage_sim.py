@@ -1,6 +1,3 @@
-` tags, maintaining its original formatting and structure.
-
-<replit_final_file>
 #!/usr/bin/env python3
 """
 leverage_sim.py
