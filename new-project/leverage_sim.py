@@ -151,45 +151,7 @@ def load_btc_history() -> pd.Series:
     except Exception as e:
         print(f"⚠️  Kraken API failed: {e}")
 
-    # Method 3: CoinGecko free tier (limited but working)
-    try:
-        import requests
-        import time
-        print("📈 Tier 3: Trying CoinGecko (free tier)...")
-        
-        # Get 1 year of data first (more reliable)
-        url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
-        params = {
-            'vs_currency': 'usd',
-            'days': '365',
-            'interval': 'daily'
-        }
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        
-        response = requests.get(url, params=params, headers=headers, timeout=15)
-        
-        if response.status_code == 200:
-            data = response.json()
-            if 'prices' in data and data['prices']:
-                # Convert to DataFrame
-                prices_data = data['prices']
-                df = pd.DataFrame(prices_data, columns=['timestamp', 'price'])
-                df['date'] = pd.to_datetime(df['timestamp'], unit='ms')
-                df = df.set_index('date').sort_index()
-                btc_series = df['price'].astype(float)
-                btc_series.name = 'Close'
-                
-                print(f"✅ CoinGecko successful: {len(btc_series)} days")
-                return btc_series
-        else:
-            print(f"⚠️  CoinGecko HTTP error: {response.status_code}")
-            
-    except Exception as e:
-        print(f"⚠️  CoinGecko failed: {e}")
-
-    # Method 4: yfinance (if available)
+    # Method 3: yfinance (if available)
     if ONLINE:
         try:
             print("📡 Tier 4: Trying yfinance...")
@@ -202,7 +164,7 @@ def load_btc_history() -> pd.Series:
         except Exception as e:
             print(f"⚠️  yfinance failed: {e}")
 
-    # Method 5: Local CSV fallback
+    # Method 4: Local CSV fallback
     try:
         csv_files = ["btc_history_backup.csv", "btc_history.csv"]
         for csv_file in csv_files:
@@ -226,7 +188,7 @@ def load_btc_history() -> pd.Series:
     except Exception as e:
         print(f"⚠️  CSV loading failed: {e}")
 
-    # Method 6: Synthetic data (last resort)
+    # Method 5: Synthetic data (last resort)
     print("📊 All real data sources failed, using synthetic data...")
     return generate_synthetic_btc_data()
 
