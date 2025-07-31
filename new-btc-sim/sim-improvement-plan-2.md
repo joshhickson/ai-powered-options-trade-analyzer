@@ -5,7 +5,39 @@
 ### **Current Codebase Status**
 - **Primary File**: `new-btc-sim/leverage_war_days.py` (371 lines)
 - **Alternative Implementation**: `new-project/leverage_sim.py` (more advanced, 800+ lines)
+- **Contract Reference**: `new-btc-sim/Loan contract ocr.md` (Figure Lending LLC terms)
 - **Issue**: Multiple competing implementations with different approaches
+
+### **⚖️ CRITICAL: Contract Compliance Requirements**
+
+**ALL SIMULATION LOGIC MUST COMPLY WITH FIGURE LENDING LLC CONTRACT TERMS:**
+
+From `new-btc-sim/Loan contract ocr.md`:
+- **Annual Percentage Rate**: 12.615% (stated as "Applicable Rate")
+- **LTV Baseline Ratio**: 75% (maximum allowed LTV under normal conditions)
+- **Trigger Event**: LTV ≥ 85% (margin call threshold)
+- **Accelerated Maximum LTV**: 90% (immediate liquidation threshold)
+- **Cure Time**: 48 hours after margin call notice
+- **Processing Fee**: 2% on all collateral liquidations
+- **Interest Accrual**: Daily compounding (rate/365 or rate/366 in leap years)
+- **Term**: 12 months (interest-only payments, balloon payment at maturity)
+
+**⚠️ IMPORTANT ADAPTATION NOTE:**
+- Contract shows $30,300 loan amount, but **simulation will use $10,000 initial loan**
+- All percentage-based calculations (LTV ratios, interest rates, fees) remain identical
+- Absolute dollar amounts and collateral requirements scale proportionally
+
+**Contract Validation Requirements:**
+```python
+# These constants MUST match contract terms exactly
+LOAN_APR = 0.12615  # 12.615% per contract
+LTV_BASELINE = 0.75  # 75% maximum normal LTV
+MARGIN_CALL_LTV = 0.85  # 85% trigger event threshold  
+LIQUIDATION_LTV = 0.90  # 90% accelerated maximum
+CURE_TIME_HOURS = 48  # 48-hour cure period
+LIQUIDATION_FEE = 0.02  # 2% processing fee
+INITIAL_LOAN_USD = 10000.0  # $10K for simulation (scaled from $30K contract)
+```
 
 ### **Critical Inconsistencies Identified**
 
@@ -110,32 +142,45 @@ if worst_ltv >= 0.85:  # Contract margin call threshold
 
 ### **Phase 1: Code Unification & Standardization**
 
-#### **Solution 1.1: Merge Best Practices from Both Implementations**
-**Target**: Create single authoritative simulation engine
+#### **Solution 1.1: Merge Best Practices with Contract Compliance**
+**Target**: Create single authoritative simulation engine that strictly follows contract terms
 
 **Implementation**:
 ```python
 class UnifiedLoanSimulator:
     def __init__(self):
-        # Use proven constants from leverage_war_days.py
-        self.LOAN_APR = 0.115
-        self.MARGIN_CALL_LTV = 0.85
-        self.LIQUIDATION_LTV = 0.90
+        # CONTRACT-COMPLIANT CONSTANTS (from Loan contract ocr.md)
+        self.LOAN_APR = 0.12615  # EXACT contract rate: 12.615%
+        self.LTV_BASELINE = 0.75  # Contract: 75% baseline ratio
+        self.MARGIN_CALL_LTV = 0.85  # Contract: 85% trigger event
+        self.LIQUIDATION_LTV = 0.90  # Contract: 90% accelerated maximum
+        self.CURE_TIME_HOURS = 48  # Contract: 48-hour cure period
+        self.LIQUIDATION_FEE = 0.02  # Contract: 2% processing fee
+        self.INITIAL_LOAN_USD = 10000.0  # Simulation amount (scaled from $30K)
 
-        # Use advanced safety features from new-project/leverage_sim.py
-        self.max_safe_ltv = 0.30
-        self.min_collateral_buffer = 0.15
+        # SAFETY FEATURES (beyond contract minimums)
+        self.max_safe_ltv = 0.30  # Conservative operational limit
+        self.min_collateral_buffer = 0.15  # Additional safety margin
 
-    def calculate_progressive_loan_size(self, total_btc, current_price):
-        # Unified approach combining both strategies
+    def calculate_contract_compliant_loan_size(self, total_btc, current_price):
+        """Calculate loan size respecting contract LTV limits"""
         collateral_btc = total_btc / 2.0
-        base_loan = collateral_btc * current_price * 0.70
-
-        # Apply safety constraints
+        
+        # Contract allows up to 75% LTV baseline
+        contract_max_loan = collateral_btc * current_price * self.LTV_BASELINE
+        
+        # Apply additional safety constraints for operational safety
         crash_scenario_price = current_price * 0.4
-        max_safe_loan = collateral_btc * crash_scenario_price * 0.75
+        safety_max_loan = collateral_btc * crash_scenario_price * 0.75
 
-        return min(base_loan, max_safe_loan)
+        return min(contract_max_loan, safety_max_loan)
+
+    def validate_contract_compliance(self):
+        """Ensure all parameters match Figure Lending LLC contract"""
+        assert self.LOAN_APR == 0.12615, "APR must match contract: 12.615%"
+        assert self.MARGIN_CALL_LTV == 0.85, "Margin call must be at 85% LTV"
+        assert self.LIQUIDATION_LTV == 0.90, "Liquidation must be at 90% LTV"
+        print("✅ All parameters validated against Figure Lending LLC contract")
 ```
 
 #### **Solution 1.2: Standardize Data Input Pipeline**
@@ -252,17 +297,25 @@ def comprehensive_sensitivity_analysis(self):
 ## 🎯 **IMMEDIATE ACTION ITEMS**
 
 ### **Priority 1 (Critical Fixes)**
-1. **Fix starting capital calculation inconsistency**
+1. **🔒 CONTRACT COMPLIANCE VALIDATION**
+   - Implement contract parameter validation against `Loan contract ocr.md`
+   - Ensure all rates, thresholds, and fees match Figure Lending LLC terms exactly
+   - Document $10K vs $30K scaling methodology
+
+2. **Fix starting capital calculation inconsistency**
    - Choose current-price approach for forward-looking analysis
+   - Scale from $30K contract to $10K simulation appropriately
    - Document the decision clearly in code comments
 
-2. **Unify loan sizing logic**
-   - Implement progressive scaling with safety constraints
-   - Add mathematical viability pre-check
+3. **Unify loan sizing logic with contract constraints**
+   - Implement progressive scaling respecting 75% LTV baseline limit
+   - Apply 85% margin call and 90% liquidation thresholds per contract
+   - Add mathematical viability pre-check within contract bounds
 
-3. **Fix interest accrual mathematics**
-   - Implement proper compound interest calculation
-   - Add real-time LTV impact monitoring
+4. **Fix interest accrual mathematics per contract terms**
+   - Implement daily compounding at exactly 12.615% APR
+   - Use daily_rate = APR / 365 (or 366 in leap years) as specified
+   - Add real-time LTV impact monitoring with contract thresholds
 
 ### **Priority 2 (Enhancement Implementation)**
 1. **Merge Monte Carlo approaches**
@@ -295,9 +348,11 @@ def comprehensive_sensitivity_analysis(self):
 ## 📊 **SUCCESS METRICS**
 
 ### **Technical Metrics**
+- [ ] **CONTRACT COMPLIANCE**: All parameters verified against Figure Lending LLC terms
+- [ ] **SCALING ACCURACY**: $10K simulation properly scaled from $30K contract
 - [ ] Single authoritative simulation engine (no conflicting implementations)
-- [ ] Mathematical accuracy verified (compound interest, LTV calculations)
-- [ ] Code coverage >90% with unit tests
+- [ ] Mathematical accuracy verified (compound interest, LTV calculations per contract)
+- [ ] Code coverage >90% with unit tests including contract validation
 - [ ] Simulation reproducibility (same inputs = same outputs)
 
 ### **Analytical Metrics**
