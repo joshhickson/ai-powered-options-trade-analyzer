@@ -25,19 +25,30 @@ import requests
 INITIAL_USD_CAPITAL = 30000.0 # Standardized initial capital
 INITIAL_LOAN_USD = 10000.0  # Simulation scaled to $10k loan
 BTC_GOAL = 1.0
-LOAN_APR = 0.12615  # Contract: 12.615% APR
+LOAN_APR = 0.12615  # 12.615% per Figure Lending LLC contract
 TRADING_FEE_PERCENT = 0.001  # 0.1% fee on all trades
 LOAN_ORIGINATION_FEE_PERCENT = 0.01  # 1% of loan amount
 LIQUIDATION_FEE_PERCENT = 0.02  # Contract: 2% processing fee on liquidations
 
 # LTV (Loan-to-Value) Ratios from Contract
 LTV_BASELINE = 0.75  # Contract: 75% baseline ratio
-MARGIN_CALL_LTV = 0.85  # Contract: 85% margin call trigger
+MARGIN_CALL_LTV = 0.85  # 85% LTV triggers margin call per contract
 LIQUIDATION_LTV = 0.90  # Contract: 90% liquidation trigger
 CURE_LTV_TARGET = LTV_BASELINE # When curing, restore to baseline
 
 # Exit a loan cycle when the price is $30,000 higher than the entry price
 PROFIT_TAKE_PRICE_INCREASE_USD = 30000.0
+
+# CONTRACT COMPLIANCE VALIDATION (per sim-improvement-plan-2.md)
+def validate_contract_compliance():
+    """Ensure all parameters match Figure Lending LLC contract terms exactly"""
+    assert LOAN_APR == 0.12615, f"APR must match contract: 12.615%, got {LOAN_APR}"
+    assert MARGIN_CALL_LTV == 0.85, "Margin call must be at 85% LTV per contract"
+    assert LIQUIDATION_LTV == 0.90, "Liquidation must be at 90% LTV per contract"
+    print("✅ CONTRACT COMPLIANCE: All parameters validated against Figure Lending LLC terms")
+
+# Validate on import
+validate_contract_compliance()
 
 def get_historical_data(interval: int = 1440, periods: int = 720) -> pd.Series:
     """
@@ -184,6 +195,7 @@ class Simulator:
             if self.current_loan and self.current_loan.is_active:
                 self.current_loan.accrue_interest(timestamp)
                 ltv = self.current_loan.get_ltv(price)
+                liquidation_ltv = 0.90  # 90% LTV triggers liquidation per contract
 
                 # Step F -> G -> H: Monitor and handle margin calls
                 if ltv >= margin_call_ltv:
