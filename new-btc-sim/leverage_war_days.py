@@ -181,7 +181,7 @@ class Simulator:
         Runs a complete simulation against a given price series with dynamic parameters.
         """
         self._reset_state()
-        # Per plan, standardize on using the MOST RECENT price for initial capital calculation
+        # Start simulation from the most recent price and work forward
         start_price = price_series.iloc[-1]
         start_date = price_series.index[-1]
 
@@ -190,8 +190,11 @@ class Simulator:
         self.total_btc = initial_btc_purchase * (1 - TRADING_FEE_PERCENT)
         self.log_event(start_date, 'START', {'price': start_price, 'details': f'Initial buy of {self.total_btc:.4f} BTC at current price'})
 
-        # Main simulation loop through the price history
-        for timestamp, price in price_series.items():
+        # Create forward-looking price series for simulation (reverse the historical data)
+        forward_series = price_series.iloc[::-1]  # Reverse to go from old to new
+        
+        # Main simulation loop through the forward price series
+        for timestamp, price in forward_series.items():
             if self.current_loan and self.current_loan.is_active:
                 self.current_loan.accrue_interest(timestamp)
                 ltv = self.current_loan.get_ltv(price)
@@ -234,11 +237,10 @@ class Simulator:
         return pd.DataFrame(self.log)
 
     def start_new_cycle(self, price, timestamp):
-        self.cycle_count += 1
-        print(f"🚀 Attempting to start cycle {self.cycle_count} at price ${price:,.2f}")
+        print(f"🚀 Attempting to start cycle {self.cycle_count + 1} at price ${price:,.2f}")
 
         # Logic for the VERY FIRST loan cycle
-        if self.cycle_count == 1:
+        if self.cycle_count == 0:
             loan_amount = INITIAL_LOAN_USD
             # To meet a 75% LTV, collateral must be worth loan / 0.75
             collateral_usd_target = loan_amount / LTV_BASELINE
@@ -273,6 +275,8 @@ class Simulator:
             print(f"   ❌ Loan amount ${loan_amount:,.0f} below minimum $10,000")
             return # Can't get a loan, so we wait
 
+        # Only increment cycle count when we actually start a loan
+        self.cycle_count += 1
         self.backup_btc = self.total_btc - collateral_btc
         self.current_loan = Loan(loan_amount, collateral_btc, price, timestamp)
         print(f"   ✅ Started cycle {self.cycle_count}: ${loan_amount:,.0f} loan with {collateral_btc:.4f} BTC collateral")
