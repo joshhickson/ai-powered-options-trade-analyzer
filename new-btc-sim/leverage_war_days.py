@@ -20,16 +20,22 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import requests
 
-# --- Configuration based on Mermaid Diagram ---
-INITIAL_USD_CAPITAL = 30000.0
+# --- Configuration based on Figure Lending LLC Contract ---
+# See: new-btc-sim/Loan contract ocr.md
+INITIAL_USD_CAPITAL = 30000.0 # Standardized initial capital
+INITIAL_LOAN_USD = 10000.0  # Simulation scaled to $10k loan
 BTC_GOAL = 1.0
-LOAN_APR = 0.115
+LOAN_APR = 0.12615  # Contract: 12.615% APR
 TRADING_FEE_PERCENT = 0.001  # 0.1% fee on all trades
 LOAN_ORIGINATION_FEE_PERCENT = 0.01  # 1% of loan amount
-# LTV = Loan-to-Value Ratio
-MARGIN_CALL_LTV = 0.85
-LIQUIDATION_LTV = 0.90
-CURE_LTV_TARGET = 0.75 # When curing a margin call, add BTC to reach this LTV
+LIQUIDATION_FEE_PERCENT = 0.02  # Contract: 2% processing fee on liquidations
+
+# LTV (Loan-to-Value) Ratios from Contract
+LTV_BASELINE = 0.75  # Contract: 75% baseline ratio
+MARGIN_CALL_LTV = 0.85  # Contract: 85% margin call trigger
+LIQUIDATION_LTV = 0.90  # Contract: 90% liquidation trigger
+CURE_LTV_TARGET = LTV_BASELINE # When curing, restore to baseline
+
 # Exit a loan cycle when the price is $30,000 higher than the entry price
 PROFIT_TAKE_PRICE_INCREASE_USD = 30000.0
 
@@ -98,8 +104,12 @@ class Loan:
     def get_balance(self):
         return self.loan_amount_usd + self.deferred_interest_usd
 
-    def accrue_interest(self):
-        daily_rate = LOAN_APR / 365
+    def accrue_interest(self, timestamp):
+        """
+        Accrues interest for one day, handling leap years per the contract.
+        """
+        days_in_year = 366 if timestamp.is_leap_year else 365
+        daily_rate = LOAN_APR / days_in_year
         interest = self.get_balance() * daily_rate
         self.deferred_interest_usd += interest
 
@@ -122,6 +132,16 @@ class Simulator:
     def __init__(self):
         """Initializes the simulator. State is reset before each run."""
         self._reset_state()
+        self.validate_contract_compliance()
+
+    def validate_contract_compliance(self):
+        """Ensure all parameters match Figure Lending LLC contract."""
+        assert LOAN_APR == 0.12615, "APR must match contract: 12.615%"
+        assert MARGIN_CALL_LTV == 0.85, "Margin call must be at 85% LTV"
+        assert LIQUIDATION_LTV == 0.90, "Liquidation must be at 90% LTV"
+        assert LTV_BASELINE == 0.75, "LTV Baseline must be 75%"
+        assert LIQUIDATION_FEE_PERCENT == 0.02, "Liquidation fee must be 2%"
+        print("✅ All parameters validated against Figure Lending LLC contract")
 
     def _reset_state(self):
         """Resets all state variables to allow for a fresh simulation run."""
@@ -150,18 +170,19 @@ class Simulator:
         Runs a complete simulation against a given price series with dynamic parameters.
         """
         self._reset_state()
-        start_price = price_series.iloc[0]
-        start_date = price_series.index[0]
+        # Per plan, standardize on using the MOST RECENT price for initial capital calculation
+        start_price = price_series.iloc[-1]
+        start_date = price_series.index[-1]
 
-        # Step A, B, C: Initial capital deployment
+        # Step A, B, C: Initial capital deployment using current market price
         initial_btc_purchase = INITIAL_USD_CAPITAL / start_price
         self.total_btc = initial_btc_purchase * (1 - TRADING_FEE_PERCENT)
-        self.log_event(start_date, 'START', {'price': start_price, 'details': f'Initial buy of {self.total_btc:.4f} BTC'})
+        self.log_event(start_date, 'START', {'price': start_price, 'details': f'Initial buy of {self.total_btc:.4f} BTC at current price'})
 
         # Main simulation loop through the price history
         for timestamp, price in price_series.items():
             if self.current_loan and self.current_loan.is_active:
-                self.current_loan.accrue_interest()
+                self.current_loan.accrue_interest(timestamp)
                 ltv = self.current_loan.get_ltv(price)
 
                 # Step F -> G -> H: Monitor and handle margin calls
@@ -175,7 +196,15 @@ class Simulator:
                         self.current_loan.collateral_btc += btc_to_add
                         self.log_event(timestamp, 'MARGIN_CALL_CURED', {'price': price, 'cured_with_btc': btc_to_add})
                     else:
-                        self.log_event(timestamp, 'LIQUIDATION', {'price': price, 'details': 'Insufficient backup BTC to cure margin call.'})
+                        loan_balance = self.current_loan.get_balance()
+                        liquidation_fee = loan_balance * LIQUIDATION_FEE_PERCENT
+                        details = {
+                            'price': price,
+                            'reason': 'Insufficient backup BTC to cure margin call.',
+                            'loan_balance_at_liquidation': loan_balance,
+                            'liquidation_fee_usd': liquidation_fee
+                        }
+                        self.log_event(timestamp, 'LIQUIDATION', details)
                         self.total_btc = 0
                         self.backup_btc = 0
                         self.is_liquidated = True
@@ -195,15 +224,27 @@ class Simulator:
 
         # Logic for the VERY FIRST loan cycle
         if self.cycle_count == 1:
-            loan_amount = 10000.0
-            collateral_usd_target = 14000.0
+            loan_amount = INITIAL_LOAN_USD
+            # To meet a 75% LTV, collateral must be worth loan / 0.75
+            collateral_usd_target = loan_amount / LTV_BASELINE
             collateral_btc = collateral_usd_target / price
         # Logic for ALL SUBSEQUENT loan cycles
         else:
             # Use half of total BTC as collateral for the next, larger loan
             collateral_btc = self.total_btc / 2.0
-            # Loan amount is now dynamic based on the larger collateral
-            loan_amount = collateral_btc * price * 0.70 # Safe 70% LTV
+
+            # --- Improved Loan Sizing Logic ---
+            # 1. Max loan based on contract's 75% LTV Baseline
+            contract_max_loan = collateral_btc * price * LTV_BASELINE
+
+            # 2. Max loan based on a safety check against a 60% price crash
+            crash_scenario_price = price * 0.40
+            # We want LTV to be < 90% in a crash. To be safe, we target 75%.
+            safety_max_loan = collateral_btc * crash_scenario_price * LTV_BASELINE
+
+            # Take the minimum of the two to be conservative
+            loan_amount = min(contract_max_loan, safety_max_loan)
+            # --- End of Improved Logic ---
 
         # Check if we have enough BTC for the required collateral
         if self.total_btc < collateral_btc:

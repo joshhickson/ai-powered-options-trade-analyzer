@@ -1,0 +1,2 @@
+Timestamp,EventType,TotalBTC,BackupBTC,CollateralBTC,LoanBalanceUSD,BTCPriceUSD,LTV,Details
+2025-07-31,START,0.2524463372538185,0,0,0,118718.3,0,"{'price': np.float64(118718.3), 'details': 'Initial buy of 0.2524 BTC at current price'}"
