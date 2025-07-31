@@ -227,12 +227,15 @@ class Simulator:
                     self.close_cycle(price, timestamp)
 
             elif self.total_btc > 0:
+                # Add debug logging to see why cycles aren't starting
+                print(f"🔍 DEBUG: Attempting to start cycle at {timestamp}, price=${price:,.2f}, total_btc={self.total_btc:.4f}")
                 self.start_new_cycle(price, timestamp)
 
         return pd.DataFrame(self.log)
 
     def start_new_cycle(self, price, timestamp):
         self.cycle_count += 1
+        print(f"🚀 Attempting to start cycle {self.cycle_count} at price ${price:,.2f}")
 
         # Logic for the VERY FIRST loan cycle
         if self.cycle_count == 1:
@@ -240,6 +243,7 @@ class Simulator:
             # To meet a 75% LTV, collateral must be worth loan / 0.75
             collateral_usd_target = loan_amount / LTV_BASELINE
             collateral_btc = collateral_usd_target / price
+            print(f"   First cycle: need {collateral_btc:.4f} BTC as collateral for ${loan_amount:,.0f} loan")
         # Logic for ALL SUBSEQUENT loan cycles
         else:
             # Use half of total BTC as collateral for the next, larger loan
@@ -256,18 +260,22 @@ class Simulator:
 
             # Take the minimum of the two to be conservative
             loan_amount = min(contract_max_loan, safety_max_loan)
+            print(f"   Subsequent cycle: using {collateral_btc:.4f} BTC collateral, max loan ${loan_amount:,.0f}")
             # --- End of Improved Logic ---
 
         # Check if we have enough BTC for the required collateral
         if self.total_btc < collateral_btc:
+            print(f"   ❌ Insufficient BTC: have {self.total_btc:.4f}, need {collateral_btc:.4f}")
             return # Wait until we have enough BTC
 
         # The loan contract has a minimum loan size
         if loan_amount < 10000:
+            print(f"   ❌ Loan amount ${loan_amount:,.0f} below minimum $10,000")
             return # Can't get a loan, so we wait
 
         self.backup_btc = self.total_btc - collateral_btc
         self.current_loan = Loan(loan_amount, collateral_btc, price, timestamp)
+        print(f"   ✅ Started cycle {self.cycle_count}: ${loan_amount:,.0f} loan with {collateral_btc:.4f} BTC collateral")
         self.log_event(timestamp, f'CYCLE_{self.cycle_count}_START', {'price': price, 'loan_amount': loan_amount})
 
     def close_cycle(self, price, timestamp):
