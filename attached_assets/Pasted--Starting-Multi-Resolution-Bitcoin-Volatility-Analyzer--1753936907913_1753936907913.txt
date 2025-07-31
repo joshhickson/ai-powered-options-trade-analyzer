@@ -1,0 +1,62 @@
+🚀 Starting Multi-Resolution Bitcoin Volatility Analyzer
+============================================================
+📁 Created export directory: exports/multi_res_analysis_20250731_044120
+------------------------------------------------------------
+📈 Fetching 720 data points at 1440-min resolution (720 days)...
+   ✅ Successfully loaded 720 data points.
+   🔬 Analyzing Daily data (Window: 90 days / 90 periods)...
+   📊 Characterizing 15 Daily crash triggers...
+   ✅ Found 11 unique crash events.
+------------------------------------------------------------
+📈 Fetching 720 data points at 60-min resolution (720 hours)...
+   ✅ Successfully loaded 720 data points.
+   🔬 Analyzing Hourly data (Window: 7 days / 168 periods)...
+   📊 Characterizing 10 Hourly crash triggers...
+   ✅ Found 4 unique crash events.
+------------------------------------------------------------
+📈 Fetching 720 data points at 15-min resolution (10800 minutes)...
+   ✅ Successfully loaded 720 data points.
+   🔬 Analyzing 15-Minute data (Window: 7 days / 672 periods)...
+   📊 Characterizing 1 15-Minute crash triggers...
+   ✅ Found 1 unique crash events.
+------------------------------------------------------------
+
+--- Combined Crash Analysis Summary ---
+   Resolution            PeakDate  ...  CrashVelocity(%/Hour)  VelocityRatio
+0       Daily 2023-11-15 00:00:00  ...                  -0.19           0.07
+1       Daily 2023-12-08 00:00:00  ...                  -0.04           0.04
+2       Daily 2024-01-02 00:00:00  ...                  -0.20           0.21
+3       Daily 2024-01-08 00:00:00  ...                  -0.08           0.03
+4       Daily 2024-03-04 00:00:00  ...                  -0.28           0.36
+5       Daily 2024-03-13 00:00:00  ...                  -0.10           0.00
+6       Daily 2024-04-08 00:00:00  ...                  -0.14           0.01
+7       Daily 2024-05-20 00:00:00  ...                  -0.07           0.01
+8       Daily 2024-11-22 00:00:00  ...                  -0.05           0.08
+9       Daily 2024-12-17 00:00:00  ...                  -0.04           0.68
+10      Daily 2025-01-21 00:00:00  ...                  -0.10           0.01
+11     Hourly 2025-07-03 13:00:00  ...                  -0.46           0.01
+12     Hourly 2025-07-09 19:00:00  ...                  -0.86           0.05
+13     Hourly 2025-07-11 09:00:00  ...                  -0.43           0.02
+14     Hourly 2025-07-14 07:00:00  ...                  -0.17            NaN
+15  15-Minute 2025-07-24 19:00:00  ...                  -0.55           0.00
+
+[16 rows x 6 columns]
+------------------------------------------------------------
+💾 Exporting combined data...
+   ✅ Saved combined_crash_data.csv and .json
+------------------------------------------------------------
+📈 Fetching 720 data points at 1440-min resolution (720 days)...
+   ✅ Successfully loaded 720 data points.
+🎨 Generating visualizations...
+   - Saved: 1_composite_volatility_analysis.png
+   - Saved: 2_v_shape_velocity_ratio.png
+   - Saved: 3_runup_vs_crash_velocity.png
+   - Saved: 4_detailed_v_shape_bubble_chart.png
+   ✅ Visualization generation complete.
+🧠 Performing simple volatility regime analysis...
+   - Saved: 5_simple_volatility_regime.png
+
+============================================================
+✅ Analysis finished successfully!
+   All results have been saved to the 'exports/multi_res_analysis_20250731_044120' directory.
+============================================================

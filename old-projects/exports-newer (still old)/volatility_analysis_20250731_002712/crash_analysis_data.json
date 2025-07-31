@@ -1,0 +1,22 @@
+[
+    {
+        "PeakDate":"2024-01-08T00:00:00.000",
+        "TroughDate":"2024-01-09T00:00:00.000",
+        "PeakPrice":46989.4,
+        "TroughPrice":46128.7,
+        "Amplitude (%)":-1.8316897002,
+        "Duration (Days)":1,
+        "Velocity (%\/Day)":-1.8316897002,
+        "Year":2024
+    },
+    {
+        "PeakDate":"2025-01-21T00:00:00.000",
+        "TroughDate":"2025-01-22T00:00:00.000",
+        "PeakPrice":106162.8,
+        "TroughPrice":103648.5,
+        "Amplitude (%)":-2.3683437136,
+        "Duration (Days)":1,
+        "Velocity (%\/Day)":-2.3683437136,
+        "Year":2025
+    }
+]
