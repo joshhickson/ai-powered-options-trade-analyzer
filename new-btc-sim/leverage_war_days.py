@@ -50,45 +50,70 @@ def validate_contract_compliance():
 # Validate on import
 validate_contract_compliance()
 
-def get_historical_data(interval: int = 1440, periods: int = 720) -> pd.Series:
-    """
-    Fetches historical price data. For the simulation, we need a continuous
-    stream of high-resolution data.
-    """
-    timeframe_map = {1440: "days", 60: "hours", 15: "minutes"}
-    timeframe_unit = timeframe_map.get(interval, "periods")
-    duration = periods
-    if timeframe_unit == "days": duration = periods
-    elif timeframe_unit == "hours": duration = (interval * periods) / 60
-    elif timeframe_unit == "minutes": duration = (interval * periods)
 
-    print(f"📈 Fetching {periods} periods of {interval}-minute BTC/USD data for simulation ({duration:.0f} {timeframe_unit})...")
-
-    since_timestamp = int((dt.datetime.now() - dt.timedelta(days=periods if interval == 1440 else (periods * interval / 1440))).timestamp())
-
-    url = "https://api.kraken.com/0/public/OHLC"
-    params = {'pair': 'XBTUSD', 'interval': interval, 'since': since_timestamp}
-
+def fetch_live_btc_price():
+    """Get current BTC price from Kraken with a fallback."""
+    print("📈 Fetching live BTC price from Kraken...")
+    url = "https://api.kraken.com/0/public/Ticker"
+    params = {'pair': 'XBTUSD'}
     try:
-        response = requests.get(url, params=params, timeout=20)
+        response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
-        if data.get('error'):
-            print(f"   ❌ Kraken API Error: {', '.join(data['error'])}")
-            return pd.Series(dtype=float)
-
-        pair_name = list(data['result'].keys())[0]
-        ohlc_data = data['result'][pair_name]
-
-        df = pd.DataFrame(ohlc_data, columns=['time', 'open', 'high', 'low', 'close', 'vwap', 'volume', 'count'])
-        df['time'] = pd.to_datetime(df['time'], unit='s')
-        df = df.set_index('time').sort_index()
-        btc_series = df['close'].astype(float)
-        print(f"   ✅ Loaded {len(btc_series)} data points from {btc_series.index.min()} to {btc_series.index.max()}.")
-        return btc_series
+        if not data.get('error'):
+            price_str = data['result']['XXBTZUSD']['c'][0]
+            price = float(price_str)
+            print(f"✅ Live BTC price from Kraken: ${price:,.2f}")
+            return price
+        else:
+            print(f"⚠️ Kraken API Error: {data['error']}")
     except Exception as e:
-        print(f"   ❌ Could not fetch historical data: {e}")
-        return pd.Series(dtype=float)
+        print(f"⚠️ Could not fetch live price from Kraken: {e}")
+
+    # Fallback to a recent, realistic price if API fails
+    fallback_price = 118000.0
+    print(f"⚠️ Using fallback price: ${fallback_price:,.2f}")
+    return fallback_price
+
+
+def initialize_current_market_state():
+    """Initialize simulation with real current market conditions."""
+    current_price = fetch_live_btc_price()
+
+    # Per strategy, start with a fixed amount of USD capital
+    initial_btc = INITIAL_USD_CAPITAL / current_price * (1 - TRADING_FEE_PERCENT)
+
+    print(f"🏦 Initializing market state: {INITIAL_USD_CAPITAL:,.0f} USD buys {initial_btc:.4f} BTC at ${current_price:,.2f}")
+
+    return {
+        'current_price': current_price,
+        'total_btc': initial_btc,
+        'simulation_start_date': dt.datetime.now(),
+    }
+
+
+def generate_gbm_path(start_price, mu, sigma, days, dt_days=1):
+    """Generates a random price path using Geometric Brownian Motion."""
+    n_steps = int(days / dt_days)
+    prices = np.zeros(n_steps + 1)
+    prices[0] = start_price
+    for t in range(1, n_steps + 1):
+        z = np.random.standard_normal()
+        prices[t] = prices[t-1] * exp((mu - 0.5 * sigma**2) * dt_days + sigma * sqrt(dt_days) * z)
+    return prices
+
+
+def generate_forward_price_scenarios():
+    """Defines realistic forward-looking price scenarios based on historical regimes."""
+    scenarios = {
+        'bull_market': {'probability': 0.20, 'annual_return': 1.5, 'volatility': 0.8},
+        'bear_market': {'probability': 0.25, 'annual_return': -0.6, 'volatility': 1.2},
+        'sideways_market': {'probability': 0.35, 'annual_return': 0.1, 'volatility': 0.6},
+        'crash_recovery': {'probability': 0.20, 'annual_return': 0.3, 'volatility': 1.5}
+    }
+    print(f"📉 Defined {len(scenarios)} distinct price scenarios for the simulation.")
+    return scenarios
+
 
 class Loan:
     """Represents a single loan cycle."""
@@ -115,12 +140,10 @@ class Loan:
     def get_balance(self):
         return self.loan_amount_usd + self.deferred_interest_usd
 
-    def accrue_interest(self, timestamp):
-        """
-        Accrues interest for one day, handling leap years per the contract.
-        """
-        days_in_year = 366 if timestamp.is_leap_year else 365
-        daily_rate = LOAN_APR / days_in_year
+    def accrue_daily_interest(self):
+        """Accrues interest for one day."""
+        # A simple daily rate is sufficient for simulation purposes
+        daily_rate = LOAN_APR / 365
         interest = self.get_balance() * daily_rate
         self.deferred_interest_usd += interest
 
@@ -138,410 +161,288 @@ class Loan:
         net_btc = net_usd / exit_price
         return net_btc
 
-class Simulator:
-    """Manages the entire loan strategy simulation over a given price series."""
-    def __init__(self):
-        """Initializes the simulator. State is reset before each run."""
-        self._reset_state()
-        self.validate_contract_compliance()
+from math import sqrt, exp
 
-    def validate_contract_compliance(self):
-        """Ensure all parameters match Figure Lending LLC contract."""
-        assert LOAN_APR == 0.12615, "APR must match contract: 12.615%"
-        assert MARGIN_CALL_LTV == 0.85, "Margin call must be at 85% LTV"
-        assert LIQUIDATION_LTV == 0.90, "Liquidation must be at 90% LTV"
-        assert LTV_BASELINE == 0.75, "LTV Baseline must be 75%"
-        assert LIQUIDATION_FEE_PERCENT == 0.02, "Liquidation fee must be 2%"
-        print("✅ All parameters validated against Figure Lending LLC contract")
+class ForwardLoanSimulator:
+    """
+    Manages the entire forward-looking loan strategy simulation.
+    """
+    def __init__(self):
+        # CONTRACT COMPLIANCE (Figure Lending LLC terms)
+        self.LOAN_APR = LOAN_APR
+        self.LTV_BASELINE = LTV_BASELINE
+        self.MARGIN_CALL_LTV = MARGIN_CALL_LTV
+        self.LIQUIDATION_LTV = LIQUIDATION_LTV
+        self.PROFIT_TAKE_USD = PROFIT_TAKE_PRICE_INCREASE_USD
+        self.MIN_LOAN_AMOUNT = 10000.0
+        self._reset_state()
 
     def _reset_state(self):
-        """Resets all state variables to allow for a fresh simulation run."""
+        """Resets all state variables for a new simulation run."""
         self.log = []
         self.total_btc = 0
-        self.backup_btc = 0
+        self.backup_btc = 0 # This is BTC not used as collateral
         self.current_loan = None
         self.cycle_count = 0
         self.is_liquidated = False
+        self.exit_reason = ""
+        self.liquidation_reason = ""
 
-    def log_event(self, timestamp, event_type, details):
-        self.log.append({
-            'Timestamp': timestamp,
-            'EventType': event_type,
-            'TotalBTC': self.total_btc,
-            'BackupBTC': self.backup_btc,
-            'CollateralBTC': self.current_loan.collateral_btc if self.current_loan else 0,
-            'LoanBalanceUSD': self.current_loan.get_balance() if self.current_loan else 0,
-            'BTCPriceUSD': details.get('price', 0),
-            'LTV': self.current_loan.get_ltv(details.get('price', 0)) if self.current_loan else 0,
-            'Details': details
-        })
+    def accrue_daily_interest(self):
+        """Handles daily interest accrual for the active loan."""
+        if self.current_loan and self.current_loan.is_active:
+            self.current_loan.accrue_daily_interest()
 
-    def run(self, price_series: pd.Series, margin_call_ltv: float, profit_take_usd: float):
-        """
-        Runs a complete simulation against a given price series with dynamic parameters.
-        """
-        self._reset_state()
-        # Start simulation from the most recent price and work forward
-        start_price = price_series.iloc[-1]
-        start_date = price_series.index[-1]
-
-        # Step A, B, C: Initial capital deployment using current market price
-        initial_btc_purchase = INITIAL_USD_CAPITAL / start_price
-        self.total_btc = initial_btc_purchase * (1 - TRADING_FEE_PERCENT)
-        self.log_event(start_date, 'START', {'price': start_price, 'details': f'Initial buy of {self.total_btc:.4f} BTC at current price'})
-
-        # Create forward-looking price series for simulation (reverse the historical data)
-        forward_series = price_series.iloc[::-1]  # Reverse to go from old to new
+    def start_new_cycle(self, price, day):
+        """Start a new loan cycle with contract-compliant sizing."""
+        required_collateral_btc = 0
+        loan_amount = 0
         
-        # Main simulation loop through the forward price series
-        for timestamp, price in forward_series.items():
-            if self.current_loan and self.current_loan.is_active:
-                self.current_loan.accrue_interest(timestamp)
-                ltv = self.current_loan.get_ltv(price)
-                liquidation_ltv = 0.90  # 90% LTV triggers liquidation per contract
-
-                # Step F -> G -> H: Monitor and handle margin calls
-                if ltv >= margin_call_ltv:
-                    required_collateral_value = self.current_loan.get_balance() / CURE_LTV_TARGET
-                    required_collateral_btc = required_collateral_value / price
-                    btc_to_add = required_collateral_btc - self.current_loan.collateral_btc
-
-                    if self.backup_btc >= btc_to_add > 0:
-                        self.backup_btc -= btc_to_add
-                        self.current_loan.collateral_btc += btc_to_add
-                        self.log_event(timestamp, 'MARGIN_CALL_CURED', {'price': price, 'cured_with_btc': btc_to_add})
-                    else:
-                        loan_balance = self.current_loan.get_balance()
-                        liquidation_fee = loan_balance * LIQUIDATION_FEE_PERCENT
-                        details = {
-                            'price': price,
-                            'reason': 'Insufficient backup BTC to cure margin call.',
-                            'loan_balance_at_liquidation': loan_balance,
-                            'liquidation_fee_usd': liquidation_fee
-                        }
-                        self.log_event(timestamp, 'LIQUIDATION', details)
-                        self.total_btc = 0
-                        self.backup_btc = 0
-                        self.is_liquidated = True
-                        break
-
-                # Step F -> I1: Check for profit-taking exit (fixed $30k increase)
-                if price >= self.current_loan.entry_price + profit_take_usd:
-                    self.close_cycle(price, timestamp)
-
-            elif self.total_btc > 0:
-                # Add debug logging to see why cycles aren't starting
-                print(f"🔍 DEBUG: Attempting to start cycle at {timestamp}, price=${price:,.2f}, total_btc={self.total_btc:.4f}")
-                self.start_new_cycle(price, timestamp)
-
-        return pd.DataFrame(self.log)
-
-    def start_new_cycle(self, price, timestamp):
-        print(f"🚀 Attempting to start cycle {self.cycle_count + 1} at price ${price:,.2f}")
-
-        # Logic for the VERY FIRST loan cycle
+        # First cycle: Fixed $10K loan per improvement plan
         if self.cycle_count == 0:
-            loan_amount = INITIAL_LOAN_USD
-            # To meet a 75% LTV, collateral must be worth loan / 0.75
-            collateral_usd_target = loan_amount / LTV_BASELINE
-            collateral_btc = collateral_usd_target / price
-            print(f"   First cycle: need {collateral_btc:.4f} BTC as collateral for ${loan_amount:,.0f} loan")
-        # Logic for ALL SUBSEQUENT loan cycles
+            loan_amount = self.MIN_LOAN_AMOUNT
+            collateral_value_target = loan_amount / self.LTV_BASELINE
+            required_collateral_btc = collateral_value_target / price
+        # Subsequent cycles: Progressive scaling
         else:
-            # Use half of total BTC as collateral for the next, larger loan
-            collateral_btc = self.total_btc / 2.0
+            collateral_btc_to_use = self.total_btc / 2.0
 
-            # --- Improved Loan Sizing Logic ---
-            # 1. Max loan based on contract's 75% LTV Baseline
-            contract_max_loan = collateral_btc * price * LTV_BASELINE
+            contract_max_loan = collateral_btc_to_use * price * self.LTV_BASELINE
+            # Safety: LTV must not exceed 90% in a 60% crash (price -> price * 0.4)
+            safety_max_loan = (collateral_btc_to_use * (price * 0.4)) * self.LTV_BASELINE
 
-            # 2. Max loan based on a safety check against a 60% price crash
-            crash_scenario_price = price * 0.40
-            # We want LTV to be < 90% in a crash. To be safe, we target 75%.
-            safety_max_loan = collateral_btc * crash_scenario_price * LTV_BASELINE
-
-            # Take the minimum of the two to be conservative
             loan_amount = min(contract_max_loan, safety_max_loan)
-            print(f"   Subsequent cycle: using {collateral_btc:.4f} BTC collateral, max loan ${loan_amount:,.0f}")
-            # --- End of Improved Logic ---
+            required_collateral_btc = collateral_btc_to_use
 
-        # Check if we have enough BTC for the required collateral
-        if self.total_btc < collateral_btc:
-            print(f"   ❌ Insufficient BTC: have {self.total_btc:.4f}, need {collateral_btc:.4f}")
-            return # Wait until we have enough BTC
+        # Check if we have enough BTC and if the loan meets the minimum size
+        if self.total_btc >= required_collateral_btc and loan_amount >= self.MIN_LOAN_AMOUNT:
+            self.cycle_count += 1
 
-        # The loan contract has a minimum loan size
-        if loan_amount < 10000:
-            print(f"   ❌ Loan amount ${loan_amount:,.0f} below minimum $10,000")
-            return # Can't get a loan, so we wait
+            # The BTC used for collateral is now "locked"
+            collateral_btc = required_collateral_btc
+            self.backup_btc = self.total_btc - collateral_btc
 
-        # Only increment cycle count when we actually start a loan
-        self.cycle_count += 1
-        self.backup_btc = self.total_btc - collateral_btc
-        self.current_loan = Loan(loan_amount, collateral_btc, price, timestamp)
-        print(f"   ✅ Started cycle {self.cycle_count}: ${loan_amount:,.0f} loan with {collateral_btc:.4f} BTC collateral")
-        self.log_event(timestamp, f'CYCLE_{self.cycle_count}_START', {'price': price, 'loan_amount': loan_amount})
+            # Create the new loan
+            self.current_loan = Loan(
+                cash_received_from_loan=loan_amount,
+                collateral_btc=collateral_btc,
+                entry_price=price,
+                entry_date=day
+            )
 
-    def close_cycle(self, price, timestamp):
-        net_btc_profit = self.current_loan.close(price, timestamp)
+            # The loan gives us cash, which we immediately use to buy more BTC
+            # This is the "leveraged" part of the strategy
+            self.total_btc += self.current_loan.btc_purchased
 
-        # Recombine all BTC holdings for the next cycle
-        self.total_btc = self.current_loan.collateral_btc + self.backup_btc + net_btc_profit
+            print(f"✅ Day {day}: Started cycle {self.cycle_count} -> Loan: ${loan_amount:,.0f}, Collateral: {collateral_btc:.4f} BTC")
+            return True
+        return False
+
+    def should_close_cycle(self, current_price):
+        """Determine if current cycle should be closed."""
+        if not self.current_loan:
+            return False
+
+        ltv = self.current_loan.get_ltv(current_price)
+        profit_target = self.current_loan.entry_price + self.PROFIT_TAKE_USD
+
+        # Contract-mandated liquidation
+        if ltv >= self.LIQUIDATION_LTV:
+            self.liquidation_reason = f"Contract liquidation - LTV at {ltv:.2%} exceeded {self.LIQUIDATION_LTV:.0%} threshold."
+            return True
+
+        # Profit-taking exit
+        if current_price >= profit_target:
+            self.exit_reason = f"Profit target reached: Price ${current_price:,.0f} >= Target ${profit_target:,.0f}"
+            return True
+
+        # Margin call handling
+        if ltv >= self.MARGIN_CALL_LTV:
+            return self.handle_margin_call(current_price)
+
+        return False
+
+    def handle_margin_call(self, current_price):
+        """Handles a margin call by using backup BTC to cure."""
+        if not self.current_loan:
+            return False
+
+        # Calculate how much BTC we need to add to get back to the baseline LTV
+        required_collateral_value = self.current_loan.get_balance() / self.LTV_BASELINE
+        required_collateral_btc = required_collateral_value / current_price
+        btc_to_add = required_collateral_btc - self.current_loan.collateral_btc
+
+        if self.backup_btc >= btc_to_add > 0:
+            # We have enough backup BTC to cure the margin call
+            self.backup_btc -= btc_to_add
+            self.current_loan.collateral_btc += btc_to_add
+            print(f"🔧 Cured margin call by adding {btc_to_add:.4f} BTC to collateral.")
+            return False # The cycle does not close, it's been cured
+        else:
+            # Not enough backup BTC, this will lead to liquidation
+            self.liquidation_reason = "Insufficient backup BTC to cure margin call."
+            return True # Signal to close/liquidate the cycle
+
+    def close_current_cycle(self, price, day):
+        """Closes the current loan cycle, logs the event, and recombines BTC."""
+        if not self.current_loan:
+            return
+
+        print(f"🚪 Day {day}: Closing cycle {self.cycle_count} at price ${price:,.2f}. Reason: {self.exit_reason}")
+
+        # Store values before clearing the loan
+        loan_balance = self.current_loan.get_balance()
+
+        # To repay the loan, we must sell some of the BTC we initially bought with it
+        btc_to_sell_for_repayment = loan_balance / price
+
+        # The profit is what's left of the BTC purchased with the loan, plus the original collateral and backup
+        net_btc_profit_from_loan = self.current_loan.btc_purchased - btc_to_sell_for_repayment
+
+        # Recombine all BTC holdings
+        self.total_btc = self.current_loan.collateral_btc + self.backup_btc + net_btc_profit_from_loan
         self.backup_btc = 0
 
-        self.log_event(timestamp, f'CYCLE_{self.cycle_count}_CLOSE', {'price': price, 'net_btc_profit': net_btc_profit})
         self.current_loan = None
+        self.exit_reason = ""
 
-        if self.total_btc >= BTC_GOAL:
-            self.log_event(timestamp, 'GOAL_REACHED', {'price': price, 'details': f'Total BTC {self.total_btc:.4f} exceeds goal of {BTC_GOAL:.4f} BTC.'})
+    def run_forward_simulation(self, initial_total_btc, price_path):
+        """Run simulation forward through a generated price path."""
+        self._reset_state()
+        self.total_btc = initial_total_btc
+
+        for day, price in enumerate(price_path):
+            # Accrue interest on the active loan
+            if self.current_loan:
+                self.accrue_daily_interest()
+
+            # Check for and handle exit conditions (liquidation, profit-taking)
+            if self.should_close_cycle(price):
+                if self.liquidation_reason:
+                    # This is a liquidation event
+                    self.is_liquidated = True
+                    self.total_btc = 0  # Total loss of all BTC
+                    print(f"💥 Day {day}: LIQUIDATION at price ${price:,.2f}. Reason: {self.liquidation_reason}")
+                    break  # End this simulation run
+                else:
+                    # This is a normal cycle close (e.g., profit taking)
+                    self.close_current_cycle(price, day)
+
+            # If there is no active loan, check if we can start a new one
+            elif not self.current_loan:
+                self.start_new_cycle(price, day)
+
+        # Return a summary of this single simulation run
+        return {
+            'liquidated': self.is_liquidated,
+            'final_btc': self.total_btc,
+            'cycles_completed': self.cycle_count,
+        }
 
 
-def generate_gbm_path(start_price, mu, sigma, days, dt=1):
-    """Generates a random price path using Geometric Brownian Motion."""
-    n_steps = int(days / dt)
-    prices = np.zeros(n_steps + 1)
-    prices[0] = start_price
-    for t in range(1, n_steps + 1):
-        z = np.random.standard_normal()
-        prices[t] = prices[t-1] * np.exp((mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * z)
-    return prices
+def run_comprehensive_monte_carlo(num_simulations=5000):
+    """Run Monte Carlo across multiple market scenarios."""
+    print(f"🇲🇨 Starting comprehensive Monte Carlo analysis with {num_simulations} simulations...")
 
-def run_monte_carlo_simulation(historical_prices, num_simulations=1000, margin_call_ltv=MARGIN_CALL_LTV, profit_take_usd=PROFIT_TAKE_PRICE_INCREASE_USD, show_progress=True):
-    """
-    Runs the Monte Carlo simulation for a given set of parameters.
-    """
-    if show_progress:
-        print(f"🇲🇨 Starting Monte Carlo analysis with {num_simulations} simulations...")
+    initial_state = initialize_current_market_state()
+    start_price = initial_state['current_price']
+    initial_btc = initial_state['total_btc']
 
-    log_returns = np.log(historical_prices / historical_prices.shift(1)).dropna()
-    mu = log_returns.mean()
-    sigma = log_returns.std()
-    start_price = historical_prices.iloc[-1] # Start simulation from the last known price
-    sim_days = 720 # 2 years
+    scenarios = generate_forward_price_scenarios()
 
-    sim = Simulator()
+    scenario_names = list(scenarios.keys())
+    scenario_probabilities = [scenarios[s]['probability'] for s in scenario_names]
+
     results = []
+    sim_engine = ForwardLoanSimulator()
 
     for i in range(num_simulations):
-        if show_progress and (i + 1) % 100 == 0:
+        if (i + 1) % 500 == 0:
             print(f"   ... running simulation {i+1}/{num_simulations}")
 
-        # Generate a new price path
-        dates = pd.to_datetime(pd.date_range(start=historical_prices.index[-1], periods=sim_days + 1, freq='D'))
-        price_path_array = generate_gbm_path(start_price, mu, sigma, sim_days)
-        price_series = pd.Series(price_path_array, index=dates)
+        # Select a scenario for this run based on its probability
+        selected_scenario_name = np.random.choice(scenario_names, p=scenario_probabilities)
+        scenario_params = scenarios[selected_scenario_name]
 
-        # Run the simulation
-        log_df = sim.run(price_series, margin_call_ltv, profit_take_usd)
+        # Generate a new, random price path for this specific simulation run
+        daily_mu = scenario_params['annual_return'] / 365
+        daily_sigma = scenario_params['volatility'] / sqrt(365)
+        price_path = generate_gbm_path(
+            start_price=start_price,
+            mu=daily_mu,
+            sigma=daily_sigma,
+            days=730 # 2-year simulation
+        )
 
-        # Store the outcome
-        final_btc = sim.total_btc
-        was_liquidated = sim.is_liquidated
-        goal_reached = not log_df[log_df['EventType'] == 'GOAL_REACHED'].empty
-        results.append({
-            'FinalBTC': final_btc,
-            'Liquidated': was_liquidated,
-            'GoalReached': goal_reached
-        })
+        # Run the simulation on the generated path
+        sim_result = sim_engine.run_forward_simulation(initial_btc, price_path)
 
+        # Record results
+        sim_result['scenario'] = selected_scenario_name
+        results.append(sim_result)
+
+    # --- Analyze and Report Results ---
     results_df = pd.DataFrame(results)
-    print("✅ Monte Carlo analysis finished.")
 
-    # --- Analyze and Print Results ---
-    liquidation_rate = results_df['Liquidated'].mean() * 100
-    goal_rate = results_df['GoalReached'].mean() * 100
-    avg_final_btc = results_df['FinalBTC'].mean()
-    median_final_btc = results_df['FinalBTC'].median()
-    avg_btc_if_not_liquidated = results_df[~results_df['Liquidated']]['FinalBTC'].mean()
-
+    liquidation_rate = results_df['liquidated'].mean() * 100
+    goal_achieved_mask = results_df['final_btc'] >= BTC_GOAL
+    goal_achievement_rate = goal_achieved_mask.mean() * 100
+    avg_final_btc = results_df['final_btc'].mean()
+    median_final_btc = results_df['final_btc'].median()
+    avg_cycles = results_df['cycles_completed'].mean()
 
     print("\n" + "=" * 60)
     print("Monte Carlo Simulation Results")
     print("=" * 60)
     print(f"Total Simulations: {num_simulations}")
     print(f"Liquidation Rate: {liquidation_rate:.2f}%")
-    print(f"BTC Goal ({BTC_GOAL}) Reached Rate: {goal_rate:.2f}%")
+    print(f"BTC Goal ({BTC_GOAL:.1f}) Reached Rate: {goal_achievement_rate:.2f}%")
     print(f"Average Final BTC (all outcomes): {avg_final_btc:.4f} BTC")
     print(f"Median Final BTC (all outcomes): {median_final_btc:.4f} BTC")
-    print(f"Average Final BTC (non-liquidated): {avg_btc_if_not_liquidated:.4f} BTC")
+    print(f"Average Cycles Completed: {avg_cycles:.2f}")
     print("-" * 60)
 
-    # Optional: Plot distribution of outcomes
-    export_dir = Path("exports") / f"monte_carlo_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # --- Export Results ---
+    export_dir = Path("new-btc-sim/exports") / f"monte_carlo_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}"
     export_dir.mkdir(parents=True, exist_ok=True)
 
-    plt.figure(figsize=(12, 6))
-    plt.hist(results_df['FinalBTC'], bins=50, edgecolor='black')
-    plt.title('Distribution of Final BTC Holdings')
+    # Save raw results
+    results_csv_path = export_dir / 'monte_carlo_results.csv'
+    results_df.to_csv(results_csv_path, index=False)
+    print(f"💾 Saved raw results to {results_csv_path}")
+
+    # Plot distribution of final BTC
+    plt.figure(figsize=(12, 7))
+    sns.histplot(results_df['final_btc'], bins=100, kde=True)
+    plt.title(f'Distribution of Final BTC Holdings ({num_simulations} Simulations)')
     plt.xlabel('Final BTC')
     plt.ylabel('Frequency')
+    plt.axvline(x=BTC_GOAL, color='r', linestyle='--', label=f'BTC Goal ({BTC_GOAL})')
+    plt.axvline(x=initial_btc, color='g', linestyle='--', label=f'Starting BTC ({initial_btc:.4f})')
+    plt.legend()
     plt.grid(True, alpha=0.3)
-    plt.savefig(export_dir / 'monte_carlo_btc_distribution.png')
-    print(f"💾 Saved distribution plot to {export_dir / 'monte_carlo_btc_distribution.png'}")
-    results_df.to_csv(export_dir / 'monte_carlo_results.csv', index=False)
-    print(f"💾 Saved raw results to {export_dir / 'monte_carlo_results.csv'}")
+    plot_path = export_dir / 'monte_carlo_btc_distribution.png'
+    plt.savefig(plot_path)
+    print(f"💾 Saved distribution plot to {plot_path}")
 
     return results_df
 
-
-def run_historical_backtest(historical_prices, export_dir):
-    """Runs the original historical backtest and saves logs and charts."""
-    print("🚀 Starting historical loan cycle simulation...")
-    sim = Simulator()
-    results_df = sim.run(historical_prices, MARGIN_CALL_LTV, PROFIT_TAKE_PRICE_INCREASE_USD)
-    print("✅ Historical simulation finished.")
-
-    if results_df.empty:
-        print("⚠️ No simulation events were logged.")
-        return
-
-    results_df.to_csv(export_dir / 'simulation_log.csv', index=False)
-    print(f"💾 Saved detailed log to {export_dir / 'simulation_log.csv'}")
-
-    print("🎨 Generating summary charts...")
-    fig, ax1 = plt.subplots(figsize=(18, 9))
-
-    ax1.plot(results_df['Timestamp'], results_df['TotalBTC'], color='blue', label='Total BTC Holdings', marker='.', markersize=4)
-    ax1.set_ylabel('Total BTC', color='blue')
-    ax1.tick_params(axis='y', labelcolor='blue')
-
-    ax2 = ax1.twinx()
-    ax2.plot(historical_prices.index, historical_prices, color='black', alpha=0.3, label='BTC Price (USD)')
-    ax2.set_yscale('log')
-    ax2.set_ylabel('BTC Price (USD, Log Scale)', color='grey')
-    ax2.tick_params(axis='y', labelcolor='grey')
-
-    margin_calls = results_df[results_df['EventType'] == 'MARGIN_CALL_CURED']
-    if not margin_calls.empty:
-        ax1.scatter(margin_calls['Timestamp'], margin_calls['TotalBTC'], color='orange', s=100, zorder=5, label='Margin Call Cured')
-
-    liquidations = results_df[results_df['EventType'] == 'LIQUIDATION']
-    if not liquidations.empty:
-        ax1.scatter(liquidations['Timestamp'], liquidations['TotalBTC'], color='red', marker='X', s=200, zorder=5, label='LIQUIDATION')
-
-    ax1.axhline(y=BTC_GOAL, color='green', linestyle='--', label=f'BTC Goal ({BTC_GOAL})')
-
-    fig.legend(loc="upper left", bbox_to_anchor=(0.1,0.9))
-    fig.suptitle('Historical Loan Strategy Simulation (2-Year Backtest)', fontsize=18)
-    fig.tight_layout(rect=[0, 0, 1, 0.96])
-    plt.savefig(export_dir / 'simulation_summary.png', dpi=200)
-    print(f"   - Saved: simulation_summary.png")
-
-    print("\n" + "=" * 60)
-    print("✅ Backtest finished successfully!")
-    print(f"   All results have been saved to the '{export_dir}' directory.")
-    print("=" * 60)
-
-
 import seaborn as sns
-
-def run_sensitivity_analysis(historical_prices, mc_sims_per_case=100):
-    """
-    Runs a sensitivity analysis by varying key parameters and executing a
-    Monte Carlo simulation for each parameter combination.
-    """
-    print("📈 Starting sensitivity analysis...")
-
-    # --- Define Parameter Ranges ---
-    ltv_range = np.arange(0.80, 0.91, 0.05)  # From 80% to 90%
-    profit_take_range = np.arange(20000, 40001, 5000) # From $20k to $40k
-
-    total_cases = len(ltv_range) * len(profit_take_range)
-    print(f"   - Testing {len(ltv_range)} LTV values and {len(profit_take_range)} Profit Take values.")
-    print(f"   - Total cases to simulate: {total_cases}")
-    print(f"   - Monte Carlo simulations per case: {mc_sims_per_case}")
-
-    all_results = []
-    case_num = 0
-
-    for ltv in ltv_range:
-        for profit_take in profit_take_range:
-            case_num += 1
-            print(f"   - Running case {case_num}/{total_cases}: LTV={ltv:.2f}, ProfitTake=${profit_take:,.0f}")
-
-            # Run the Monte Carlo simulation for this parameter combination
-            results_df = run_monte_carlo_simulation(
-                historical_prices,
-                num_simulations=mc_sims_per_case,
-                margin_call_ltv=ltv,
-                profit_take_usd=profit_take,
-                show_progress=False # Keep the output clean
-            )
-
-            # Get the summary statistics
-            liquidation_rate = results_df['Liquidated'].mean()
-            avg_btc_if_not_liquidated = results_df[~results_df['Liquidated']]['FinalBTC'].mean()
-
-            all_results.append({
-                'LTV': ltv,
-                'ProfitTake': profit_take,
-                'LiquidationRate': liquidation_rate,
-                'AvgFinalBTC': avg_btc_if_not_liquidated
-            })
-
-    results_df = pd.DataFrame(all_results)
-    print("✅ Sensitivity analysis finished.")
-
-    # --- Visualize Results ---
-    export_dir = Path("exports") / f"sensitivity_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    export_dir.mkdir(parents=True, exist_ok=True)
-    results_df.to_csv(export_dir / 'sensitivity_raw_results.csv', index=False)
-    print(f"💾 Saved raw sensitivity results to {export_dir / 'sensitivity_raw_results.csv'}")
-
-    # Create Heatmap for Liquidation Rate
-    liquidation_pivot = results_df.pivot(index='LTV', columns='ProfitTake', values='LiquidationRate')
-    plt.figure(figsize=(12, 8))
-    sns.heatmap(liquidation_pivot, annot=True, fmt=".2%", cmap="Reds")
-    plt.title('Liquidation Rate Sensitivity')
-    plt.xlabel('Profit Take Threshold (USD)')
-    plt.ylabel('Margin Call LTV')
-    plt.savefig(export_dir / 'sensitivity_liquidation_rate.png')
-    print(f"💾 Saved Liquidation Rate heatmap to {export_dir / 'sensitivity_liquidation_rate.png'}")
-
-    # Create Heatmap for Average Final BTC
-    btc_pivot = results_df.pivot(index='LTV', columns='ProfitTake', values='AvgFinalBTC')
-    plt.figure(figsize=(12, 8))
-    sns.heatmap(btc_pivot, annot=True, fmt=".4f", cmap="Greens")
-    plt.title('Average Final BTC (Non-Liquidated) Sensitivity')
-    plt.xlabel('Profit Take Threshold (USD)')
-    plt.ylabel('Margin Call LTV')
-    plt.savefig(export_dir / 'sensitivity_avg_final_btc.png')
-    print(f"💾 Saved Average Final BTC heatmap to {export_dir / 'sensitivity_avg_final_btc.png'}")
-
 
 def main():
     """Main function to run the simulation and generate outputs."""
     import argparse
-    parser = argparse.ArgumentParser(description="Run a BTC leverage simulation.")
-    parser.add_argument(
-        '--mode',
-        type=str,
-        default='historical',
-        choices=['historical', 'montecarlo', 'sensitivity'],
-        help="The simulation mode to run ('historical', 'montecarlo', or 'sensitivity')."
-    )
+
+    parser = argparse.ArgumentParser(description="Run a forward-looking BTC leverage simulation.")
     parser.add_argument(
         '-n', '--num-simulations',
         type=int,
-        default=100,
-        help="Number of simulations per case for Monte Carlo or Sensitivity modes."
+        default=1000, # A smaller default for quick runs
+        help="Number of simulations to run for Monte Carlo analysis."
     )
     args = parser.parse_args()
 
-    historical_prices = get_historical_data(interval=1440, periods=720)
-    if historical_prices.empty:
-        print("❌ Aborting simulation due to data fetch failure.")
-        return
-
-    if args.mode == 'historical':
-        export_dir = Path("exports") / f"simulation_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        export_dir.mkdir(parents=True, exist_ok=True)
-        print(f"📁 Created export directory: {export_dir}")
-        run_historical_backtest(historical_prices, export_dir)
-    elif args.mode == 'montecarlo':
-        run_monte_carlo_simulation(historical_prices, num_simulations=args.num_simulations)
-    elif args.mode == 'sensitivity':
-        run_sensitivity_analysis(historical_prices, mc_sims_per_case=args.num_simulations)
+    run_comprehensive_monte_carlo(num_simulations=args.num_simulations)
 
 
 if __name__ == "__main__":
