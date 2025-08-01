@@ -3,26 +3,33 @@
 
 ## 🎯 **OBJECTIVE: Pure Forward-Looking Simulation**
 
-**Problem Statement**: Current simulation has fundamental time direction issues that create impossible market scenarios. We need a pure forward-looking simulation that starts from current market conditions and projects realistic future scenarios.
+**Problem Statement**: Current simulation in `new-btc-sim/leverage_war_days.py` has fundamental time direction issues that create impossible market scenarios. We need a pure forward-looking simulation that starts from current market conditions and projects realistic future scenarios.
 
 **Solution**: Implement a Monte Carlo-based forward simulation using current market price as the starting point, with realistic scenario modeling based on historical volatility patterns.
+
+## 📁 **KEY FILES IN SCOPE**
+- **Primary Implementation**: `new-btc-sim/leverage_war_days.py` (current broken simulation)
+- **Contract Reference**: `new-btc-sim/Loan contract ocr.md` (Figure Lending LLC terms)
+- **Strategy Logic**: `new-btc-sim/Loan Mermaids.md` (mermaid flowcharts)
+- **Legacy Examples**: `old-projects/leverage_sim.py`, `old-projects/leverage_sim2.py`, `old-projects/leverage_sim3.py`
+- **Export Directory**: `new-btc-sim/exports/` (simulation results)
 
 ---
 
 ## 🔍 **ROOT CAUSE ANALYSIS**
 
-### **Current Issues Identified**
-1. **Time Direction Confusion**: Simulation uses current prices to buy initial BTC, then immediately processes 2-year-old historical prices
+### **Current Issues Identified in `new-btc-sim/leverage_war_days.py`**
+1. **Time Direction Confusion**: Lines 172-176 use current prices to buy initial BTC, then line 179 immediately processes 2-year-old historical prices
 2. **Impossible Market Scenarios**: Starting at $118K then immediately facing $29K prices creates unrealistic liquidation scenarios  
-3. **Single Cycle Execution**: Only runs one loan cycle due to broken exit condition logic
-4. **Missing Profit-Taking**: No cycle completion despite price movements that should trigger exits
+3. **Single Cycle Execution**: Only runs one loan cycle due to broken exit condition logic in `run()` method (lines 140-190)
+4. **Missing Profit-Taking**: No cycle completion despite price movements that should trigger exits in `start_new_cycle()` method
 
-### **Why Current Approach Fails**
+### **Why Current Approach Fails in `leverage_war_days.py`**
 ```python
-# BROKEN: Current hybrid approach
-start_price = price_series.iloc[-1]  # Uses current price ($118K)
-initial_btc = INITIAL_USD_CAPITAL / start_price  # Buys 0.25 BTC
-forward_series = price_series.iloc[::-1]  # Processes old prices ($29K)
+# BROKEN: Current hybrid approach in leverage_war_days.py lines 172-179
+start_price = price_series.iloc[-1]  # Uses current price ($118K) - line 172
+initial_btc = INITIAL_USD_CAPITAL / start_price  # Buys 0.25 BTC - line 175
+forward_series = price_series.iloc[::-1]  # Processes old prices ($29K) - line 179
 # Result: Immediate impossible price crash
 ```
 
@@ -39,6 +46,7 @@ forward_series = price_series.iloc[::-1]  # Processes old prices ($29K)
 ### **Implementation Strategy**
 
 #### **Phase 1: Current Market Initialization**
+**Target File**: `new-btc-sim/leverage_war_days.py` - Replace `get_historical_data()` function (lines 42-66)
 ```python
 def initialize_current_market_state():
     """Initialize simulation with real current market conditions"""
@@ -121,6 +129,11 @@ class ForwardLoanSimulator:
 ## 📊 **DETAILED TECHNICAL SPECIFICATIONS**
 
 ### **1. Market Data Integration**
+**Target File**: `new-btc-sim/leverage_war_days.py` - Replace existing Kraken API call (lines 42-66)
+**Reference Files**: 
+- `old-projects/leverage_sim.py` lines 89-120 (working live price fetch examples)
+- `old-projects/leverage_sim2.py` lines 45-75 (fallback mechanisms)
+
 ```python
 def fetch_live_btc_price():
     """Get current BTC price from multiple sources with fallback"""
@@ -167,6 +180,10 @@ def create_monte_carlo_price_paths(start_price, scenarios, days):
 ```
 
 ### **3. Loan Cycle Management**
+**Target File**: `new-btc-sim/leverage_war_days.py` - Replace `start_new_cycle()` method (lines 191-235)
+**Contract Reference**: `new-btc-sim/Loan contract ocr.md` (Figure Lending LLC terms)
+**Validation Against**: Contract parameters on page 7-8 (LTV ratios, liquidation thresholds)
+
 ```python
 def start_new_cycle(self, price, day):
     """Start new loan cycle with contract-compliant sizing"""
@@ -284,22 +301,39 @@ def run_comprehensive_monte_carlo(num_simulations=5000):
 ## 🛠️ **IMPLEMENTATION ROADMAP**
 
 ### **Week 1: Core Framework**
-1. Implement live price fetching with fallbacks
-2. Create forward price path generation
-3. Build contract-compliant loan sizing logic
-4. Add proper exit condition handling
+**Files to Modify**:
+1. **`new-btc-sim/leverage_war_days.py`** - Replace live price fetching (lines 42-66)
+2. **`new-btc-sim/leverage_war_days.py`** - Implement forward price path generation (new function)
+3. **`new-btc-sim/leverage_war_days.py`** - Fix loan sizing logic in `start_new_cycle()` (lines 191-235)
+4. **`new-btc-sim/leverage_war_days.py`** - Fix exit conditions in `run()` method (lines 140-190)
+
+**Reference Files for Examples**:
+- `old-projects/leverage_sim.py` (working price fetch patterns)
+- `old-projects/leverage_sim2.py` (Monte Carlo implementations)
+- `new-btc-sim/Loan contract ocr.md` (contract compliance validation)
 
 ### **Week 2: Monte Carlo Engine**
-1. Implement scenario-based price modeling
-2. Create comprehensive simulation runner
-3. Add statistical analysis and reporting
-4. Build visualization and export system
+**Files to Create/Modify**:
+1. **`new-btc-sim/leverage_war_days.py`** - Add scenario-based price modeling (new `generate_forward_price_scenarios()`)
+2. **`new-btc-sim/leverage_war_days.py`** - Enhance `run_monte_carlo_simulation()` method (lines 311-380)
+3. **`new-btc-sim/leverage_war_days.py`** - Improve export functionality (lines 400-450)
+4. **`new-btc-sim/exports/`** - Updated result visualization templates
+
+**Reference Implementation**:
+- `old-projects/leverage_sim3.py` lines 200-300 (Monte Carlo patterns)
+- `exports/` directory structure examples
 
 ### **Week 3: Validation & Optimization**
-1. Run extensive validation tests
-2. Compare results against historical backtests
-3. Optimize parameters using grid search
-4. Create final documentation and tutorials
+**Files for Testing**:
+1. **`new-btc-sim/leverage_war_days.py`** - Add validation tests against contract terms
+2. **`new-btc-sim/leverage_war_days.py`** - Compare with `old-projects/leverage_sim.py` results
+3. **`new-btc-sim/leverage_war_days.py`** - Grid search optimization in `run_sensitivity_analysis()`
+4. **`new-btc-sim/sim-improvement-plan-3.md`** - Document final results and tutorials
+
+**Validation Against**:
+- `new-btc-sim/Loan contract ocr.md` (contract compliance)
+- `old-projects/exports/` (historical baseline comparisons)
+- `new-btc-sim/Loan Mermaids.md` (strategy logic validation)
 
 ---
 
@@ -326,16 +360,22 @@ def add_risk_management_features():
 
 ## 🎯 **EXPECTED OUTCOMES**
 
-### **Simulation Improvements**
-- **Realistic Results**: Forward simulation eliminates impossible scenarios
-- **Multiple Cycles**: 5-10 loan cycles per 2-year simulation period
-- **Contract Accuracy**: 100% compliance with Figure Lending LLC terms
+### **Simulation Improvements in `new-btc-sim/leverage_war_days.py`**
+- **Realistic Results**: Forward simulation eliminates impossible scenarios seen in current logs
+- **Multiple Cycles**: 5-10 loan cycles per 2-year simulation period (vs current 1 cycle)
+- **Contract Accuracy**: 100% compliance with `new-btc-sim/Loan contract ocr.md` terms
 - **Scenario Coverage**: Performance across all major market conditions
 
-### **Decision Support**
-- **Clear Risk Metrics**: Precise liquidation probabilities
-- **Parameter Optimization**: Best LTV ratios and profit targets
-- **Market Timing**: When to deploy vs hold cash
-- **Capital Allocation**: Optimal position sizing strategies
+### **Decision Support via `new-btc-sim/exports/` Output**
+- **Clear Risk Metrics**: Precise liquidation probabilities in CSV exports
+- **Parameter Optimization**: Best LTV ratios and profit targets in sensitivity analysis
+- **Market Timing**: When to deploy vs hold cash based on scenario modeling
+- **Capital Allocation**: Optimal position sizing strategies documented in results
 
-This pure forward simulation approach will provide realistic, actionable insights while maintaining strict contract compliance and mathematical rigor.
+### **File Deliverables**
+- **Fixed Core**: `new-btc-sim/leverage_war_days.py` with working forward simulation
+- **Results**: Enhanced `new-btc-sim/exports/` with realistic multi-cycle data
+- **Documentation**: Updated `new-btc-sim/sim-improvement-plan-3.md` with validation results
+- **Compliance**: Full validation against `new-btc-sim/Loan contract ocr.md` parameters
+
+This pure forward simulation approach will provide realistic, actionable insights while maintaining strict contract compliance and mathematical rigor, with all changes tracked in the specified files for maximum AI agent context.
